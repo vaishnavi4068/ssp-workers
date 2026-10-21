@@ -1,0 +1,51 @@
+{{- if .Values.serviceAccounts.create }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.serviceAccounts.worker.name }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app.kubernetes.io/name: spp-workers
+    app.kubernetes.io/part-of: spp-platform
+  annotations:
+    iam.gke.io/gcp-service-account: {{ .Values.serviceAccounts.worker.gsaEmail | quote }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.serviceAccounts.runner.name }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app.kubernetes.io/name: spp-tf-runner
+    app.kubernetes.io/part-of: spp-platform
+  annotations:
+    iam.gke.io/gcp-service-account: {{ .Values.serviceAccounts.runner.gsaEmail | quote }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spp-workers-job-manager
+  namespace: {{ .Values.global.namespace }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs", "jobs/status", "cronjobs"]
+    verbs: ["create", "get", "list", "watch", "delete", "patch"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spp-workers-job-manager
+  namespace: {{ .Values.global.namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccounts.worker.name }}
+    namespace: {{ .Values.global.namespace }}
+roleRef:
+  kind: Role
+  name: spp-workers-job-manager
+  apiGroup: rbac.authorization.k8s.io

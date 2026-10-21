@@ -1,0 +1,304 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spp.internal/schemas/gcs_bucket.schema.json",
+  "title": "SPP GCS Bucket Four-Gate Schema (Requested, Approved, Expected)",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/requested" },
+    { "$ref": "#/$defs/approved" },
+    { "$ref": "#/$defs/expected_entry" }
+  ],
+  "$defs": {
+    "lifecycle_rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "condition"],
+      "properties": {
+        "action": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["Delete", "SetStorageClass", "AbortIncompleteMultipartUpload"]
+            },
+            "storage_class": {
+              "type": "string",
+              "enum": ["STANDARD", "NEARLINE", "COLDLINE", "ARCHIVE"]
+            }
+          }
+        },
+        "condition": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "age": { "type": "integer", "minimum": 1 },
+            "age_days": { "type": "integer", "minimum": 1 },
+            "with_state": { "type": "string", "enum": ["ANY", "LIVE", "ARCHIVED"] },
+            "num_newer_versions": { "type": "integer", "minimum": 1 },
+            "days_since_noncurrent_time": { "type": "integer", "minimum": 1 },
+            "matches_storage_class": {
+              "type": "array",
+              "items": { "type": "string", "enum": ["STANDARD", "NEARLINE", "COLDLINE", "ARCHIVE"] }
+            }
+          }
+        }
+      }
+    },
+    "access_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "members"],
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": [
+            "roles/storage.objectAdmin",
+            "roles/storage.objectViewer",
+            "roles/storage.objectCreator",
+            "roles/storage.legacyBucketReader"
+          ]
+        },
+        "members": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^(group|serviceAccount):[^\\s]+$"
+          }
+        }
+      }
+    },
+    "requested": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["api_version", "kind", "action", "metadata", "spec"],
+      "properties": {
+        "api_version": { "const": "idp.spp/v1" },
+        "kind": { "const": "gcs_bucket" },
+        "action": { "type": "string", "enum": ["create", "update", "delete", "import"] },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "apm_id",
+            "project_id",
+            "environment",
+            "lob",
+            "data_sensitivity",
+            "data_classification",
+            "owner",
+            "shared_mailbox",
+            "requested_by",
+            "cost_center",
+            "tenancy"
+          ],
+          "properties": {
+            "apm_id": { "type": "string", "pattern": "^(APM|apm)[0-9]{5}$" },
+            "project_id": { "type": "string", "minLength": 3 },
+            "environment": { "type": "string", "enum": ["nonprod", "prod"] },
+            "lob": { "type": "string", "pattern": "^[a-z][a-z0-9]{1,5}$" },
+            "data_sensitivity": { "type": "string", "enum": ["restricted", "unrestricted"] },
+            "data_classification": { "type": "string", "minLength": 1 },
+            "owner": { "type": "string", "minLength": 3 },
+            "shared_mailbox": { "type": "string", "minLength": 3 },
+            "requested_by": { "type": "string", "minLength": 3 },
+            "cost_center": { "type": "string", "minLength": 1 },
+            "tenancy": { "type": "string", "enum": ["dedicated", "shared"] },
+            "labels": {
+              "type": "object",
+              "propertyNames": {
+                "not": { "const": "environmentsubtype" }
+              },
+              "additionalProperties": { "type": "string" }
+            },
+            "extensions": { "type": "object" }
+          }
+        },
+        "spec": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "location", "storage_class", "versioning", "purpose"],
+          "properties": {
+            "name": {
+              "type": "string",
+              "maxLength": 63,
+              "pattern": "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
+            },
+            "location": { "const": "us-east1" },
+            "storage_class": {
+              "type": "string",
+              "enum": ["STANDARD", "NEARLINE", "COLDLINE", "ARCHIVE"]
+            },
+            "versioning": { "type": "boolean" },
+            "lifecycle_rules": {
+              "type": "array",
+              "default": [],
+              "items": { "$ref": "#/$defs/lifecycle_rule" }
+            },
+            "access": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/access_binding" }
+            },
+            "purpose": { "type": "string", "minLength": 2 }
+          }
+        }
+      }
+    },
+    "approved": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["api_version", "kind", "action", "metadata", "spec", "approval"],
+      "properties": {
+        "api_version": { "const": "idp.spp/v1" },
+        "kind": { "const": "gcs_bucket" },
+        "action": { "type": "string", "enum": ["create", "update", "delete", "import"] },
+        "metadata": {
+          "type": "object",
+          "required": [
+            "apm_id",
+            "project_id",
+            "environment",
+            "lob",
+            "data_sensitivity",
+            "owner",
+            "requested_by",
+            "cost_center",
+            "labels"
+          ],
+          "properties": {
+            "apm_id": { "type": "string", "pattern": "^(APM|apm)[0-9]{5}$" },
+            "project_id": { "type": "string" },
+            "environment": { "type": "string", "enum": ["nonprod", "prod"] },
+            "lob": { "type": "string" },
+            "data_sensitivity": { "type": "string", "enum": ["restricted", "unrestricted"] },
+            "data_classification": { "type": "string" },
+            "owner": { "type": "string" },
+            "shared_mailbox": { "type": "string" },
+            "requested_by": { "type": "string" },
+            "cost_center": { "type": "string" },
+            "tenancy": { "type": "string" },
+            "labels": {
+              "type": "object",
+              "required": [
+                "sppappid",
+                "costcenter",
+                "environmenttype",
+                "primarylob",
+                "datasensitivity",
+                "owner",
+                "provisionedby",
+                "idp_resource_id"
+              ],
+              "propertyNames": {
+                "not": { "const": "environmentsubtype" }
+              },
+              "additionalProperties": { "type": "string" }
+            },
+            "extensions": { "type": "object" },
+            "resolved": { "type": "object" }
+          }
+        },
+        "spec": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "location",
+            "storage_class",
+            "versioning",
+            "lifecycle_rules",
+            "retention_days",
+            "retention_locked",
+            "uniform_bucket_level_access",
+            "public_access_prevention",
+            "kms_key_name",
+            "soft_delete_retention_days",
+            "force_destroy"
+          ],
+          "properties": {
+            "name": { "type": "string", "maxLength": 63 },
+            "location": { "const": "us-east1" },
+            "storage_class": { "type": "string", "enum": ["STANDARD", "NEARLINE", "COLDLINE", "ARCHIVE"] },
+            "versioning": { "type": "boolean" },
+            "lifecycle_rules": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/lifecycle_rule" }
+            },
+            "access": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/access_binding" }
+            },
+            "purpose": { "type": "string" },
+            "retention_days": { "type": "integer", "minimum": 90 },
+            "retention_locked": { "const": false },
+            "uniform_bucket_level_access": { "const": true },
+            "public_access_prevention": { "const": "enforced" },
+            "kms_key_name": {
+              "type": "string",
+              "pattern": "^projects/[^/]+/locations/us-east1/keyRings/[^/]+/cryptoKeys/[^/]+$"
+            },
+            "soft_delete_retention_days": { "type": "integer", "minimum": 7 },
+            "force_destroy": { "const": false }
+          }
+        },
+        "prerequisites": { "type": "array" },
+        "post_apply": { "type": "array" },
+        "approval": { "type": "object" }
+      }
+    },
+    "expected_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project",
+        "name",
+        "location",
+        "storage_class",
+        "uniform_bucket_level_access",
+        "public_access_prevention",
+        "versioning",
+        "autoclass",
+        "default_kms_key_name",
+        "soft_delete_policy",
+        "lifecycle_rules",
+        "labels",
+        "iam_bindings",
+        "force_destroy"
+      ],
+      "properties": {
+        "project": { "type": "string" },
+        "name": { "type": "string" },
+        "location": { "const": "us-east1" },
+        "storage_class": { "type": "string", "enum": ["STANDARD", "NEARLINE", "COLDLINE", "ARCHIVE"] },
+        "uniform_bucket_level_access": { "const": true },
+        "public_access_prevention": { "const": "enforced" },
+        "versioning": { "type": "boolean" },
+        "autoclass": { "const": false },
+        "default_kms_key_name": {
+          "type": "string",
+          "pattern": "^projects/[^/]+/locations/us-east1/keyRings/[^/]+/cryptoKeys/[^/]+$"
+        },
+        "retention_policy": {
+          "type": ["object", "null"],
+          "properties": {
+            "retention_period": { "type": "integer", "minimum": 7776000 },
+            "is_locked": { "const": false }
+          }
+        },
+        "soft_delete_policy": {
+          "type": "object",
+          "required": ["retention_duration_seconds"],
+          "properties": {
+            "retention_duration_seconds": { "type": "integer", "minimum": 604800 }
+          }
+        },
+        "lifecycle_rules": { "type": "array" },
+        "labels": { "type": "object" },
+        "iam_bindings": { "type": "object" },
+        "force_destroy": { "const": false }
+      }
+    }
+  }
+}
