@@ -1,0 +1,75 @@
+{{- if .Values.drift.enabled }}
+{{- range $projectId := .Values.drift.projects }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: "drift-{{ $projectId }}"
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    app.kubernetes.io/name: spp-drift-scanner
+    app.kubernetes.io/part-of: spp-platform
+    spp.platform/project-id: {{ $projectId | quote }}
+spec:
+  schedule: {{ $.Values.drift.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: {{ $.Values.terraform.jobActiveDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: spp-drift-scanner
+            app.kubernetes.io/part-of: spp-platform
+            spp.platform/project-id: {{ $projectId | quote }}
+        spec:
+          serviceAccountName: {{ $.Values.serviceAccounts.runner.name }}
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          nodeSelector:
+            {{- toYaml $.Values.global.nodeSelector | nindent 12 }}
+          tolerations:
+            {{- toYaml $.Values.global.tolerations | nindent 12 }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+          containers:
+            - name: drift-scanner
+              image: "{{ $.Values.images.registry }}/{{ $.Values.images.repo }}:{{ $.Values.images.tag }}"
+              imagePullPolicy: {{ $.Values.images.pullPolicy }}
+              command:
+                - "python"
+                - "-m"
+                - "workers.drift"
+                - "--project-id"
+                - {{ $projectId | quote }}
+              env:
+                - name: SPP_PROJECT_ID
+                  value: {{ $projectId | quote }}
+                - name: SPP_STATE_BUCKET
+                  value: {{ $.Values.terraform.stateBucket | quote }}
+                - name: GOOGLE_CLOUD_LOCATION
+                  value: {{ $.Values.global.gcpRegion | quote }}
+                - name: SPP_RUNNER_KSA
+                  value: {{ $.Values.serviceAccounts.runner.name | quote }}
+                - name: SPP_RUNNER_GSA
+                  value: {{ $.Values.serviceAccounts.runner.gsaEmail | quote }}
+              resources:
+                requests:
+                  cpu: "250m"
+                  memory: "512Mi"
+                limits:
+                  cpu: "1"
+                  memory: "1Gi"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: false
+                capabilities:
+                  drop: ["ALL"]
+{{- end }}
+{{- end }}

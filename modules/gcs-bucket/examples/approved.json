@@ -1,0 +1,109 @@
+{
+  "api_version": "idp.spp/v1",
+  "kind": "gcs_bucket",
+  "action": "create",
+  "metadata": {
+    "apm_id": "APM12345",
+    "project_id": "spp-nonprod-orders-svc",
+    "environment": "nonprod",
+    "lob": "spp",
+    "data_sensitivity": "restricted",
+    "data_classification": "proprietary",
+    "owner": "bucket.owner@example.com",
+    "shared_mailbox": "spp-orders-team@example.com",
+    "requested_by": "requester@example.com",
+    "cost_center": "000000",
+    "tenancy": "dedicated",
+    "labels": {
+      "app": "orders",
+      "costcenter": "000000",
+      "dataclassification": "proprietary",
+      "datasensitivity": "restricted",
+      "environmenttype": "nonprod",
+      "idp_resource_id": "9478bcfc-c2cf-583b-8bd8-096476647840",
+      "owner": "bucket_owner_example_com",
+      "primarylob": "spp",
+      "provisionedby": "idp",
+      "sharedemailaddress": "spp-orders-team_example_com",
+      "sppappid": "apm12345",
+      "tenancy": "dedicated"
+    },
+    "extensions": {
+      "spp": {
+        "sppml_version": "1.5"
+      }
+    },
+    "resolved": {
+      "app_tier": "2",
+      "environment_type": "nonprod",
+      "vpc_sc_perimeter": "spp_nonprod_restricted_perimeter",
+      "cost_center_validated": true,
+      "resolved_at": "2026-10-21T14:02:13Z"
+    }
+  },
+  "spec": {
+    "name": "spp-nonprod-orders-landing-a1b2",
+    "location": "us-east1",
+    "storage_class": "STANDARD",
+    "versioning": false,
+    "lifecycle_rules": [],
+    "access": [
+      {
+        "role": "roles/storage.objectAdmin",
+        "members": [
+          "serviceAccount:orders-pipeline@spp-nonprod-orders-svc.iam.gserviceaccount.com"
+        ]
+      },
+      {
+        "role": "roles/storage.objectViewer",
+        "members": [
+          "group:gcp-spp-nonprod-orders-read@example.com"
+        ]
+      }
+    ],
+    "purpose": "Landing zone for order events",
+    "retention_days": 90,
+    "retention_locked": false,
+    "uniform_bucket_level_access": true,
+    "public_access_prevention": "enforced",
+    "kms_key_name": "projects/microdrive-dev/locations/us-east1/keyRings/TODO-keyring/cryptoKeys/TODO-gcs-key",
+    "soft_delete_retention_days": 7,
+    "force_destroy": false
+  },
+  "prerequisites": [
+    {
+      "type": "ad_group",
+      "target": "group:gcp-spp-nonprod-orders-read@example.com",
+      "rule_id": "PRQ-001"
+    },
+    {
+      "type": "vpc_sc_ingress",
+      "target": "group:gcp-spp-nonprod-orders-read@example.com",
+      "params": {
+        "perimeter": "spp_nonprod_restricted_perimeter"
+      },
+      "rule_id": "PRQ-002"
+    }
+  ],
+  "post_apply": [
+    {
+      "type": "notify_owner",
+      "target": "bucket.owner@example.com"
+    }
+  ],
+  "approval": {
+    "request_id": "22120aab-3834-51d3-b631-0f7d3c43f56e",
+    "requested_spec_sha256": "a0f44d2a1b4a62e91f142e0939f1e9c273473802f7276838d166674868190222",
+    "policy_bundle_revision": "3f9a1c2",
+    "gate_key": "gcs_bucket_owner",
+    "decided_at": "2026-10-22T09:41:00Z",
+    "approvers": [
+      {
+        "approver_key": "bucket_owner",
+        "identity": "bucket.owner@example.com",
+        "status": "approved",
+        "responded_at": "2026-10-22T09:41:00Z"
+      }
+    ]
+  }
+}

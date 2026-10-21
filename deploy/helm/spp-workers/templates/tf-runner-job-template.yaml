@@ -1,0 +1,76 @@
+{{- if .Values.terraform.templateEnabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Values.terraform.sampleJob.jobName }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app.kubernetes.io/name: spp-tf-runner
+    app.kubernetes.io/part-of: spp-platform
+    app.kubernetes.io/component: terraform-runner-job
+    spp.platform/phase: {{ .Values.terraform.sampleJob.phase | quote }}
+    spp.platform/project-id: {{ .Values.terraform.sampleJob.projectId | quote }}
+  annotations:
+    spp.platform/operation-id: {{ .Values.terraform.sampleJob.operationId | quote }}
+    spp.platform/runner-gsa: {{ .Values.serviceAccounts.runner.gsaEmail | quote }}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ .Values.terraform.jobActiveDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.terraform.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spp-tf-runner
+        app.kubernetes.io/part-of: spp-platform
+        app.kubernetes.io/component: terraform-runner-job
+    spec:
+      serviceAccountName: {{ .Values.serviceAccounts.runner.name }}
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      nodeSelector:
+        {{- toYaml .Values.global.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.global.tolerations | nindent 8 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: tf-runner
+          image: "{{ .Values.images.registry }}/{{ .Values.images.repo }}:{{ .Values.images.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command: ["python", "-m", "workers.runner_entrypoint"]
+          env:
+            - name: SPP_OPERATION_ID
+              value: {{ .Values.terraform.sampleJob.operationId | quote }}
+            - name: SPP_PHASE
+              value: {{ .Values.terraform.sampleJob.phase | quote }}
+            - name: SPP_STATE_UNIT_ID
+              value: {{ .Values.terraform.sampleJob.stateUnitId | quote }}
+            - name: SPP_REVISION_ID
+              value: {{ .Values.terraform.sampleJob.revisionId | quote }}
+            - name: SPP_REVISION_NO
+              value: {{ .Values.terraform.sampleJob.revisionNo | quote }}
+            - name: SPP_PROJECT_ID
+              value: {{ .Values.terraform.sampleJob.projectId | quote }}
+            - name: SPP_STATE_BUCKET
+              value: {{ .Values.terraform.stateBucket | quote }}
+            - name: GOOGLE_CLOUD_LOCATION
+              value: {{ .Values.global.gcpRegion | quote }}
+            - name: GOOGLE_IMPERSONATE_SERVICE_ACCOUNT
+              value: {{ .Values.terraform.sampleJob.executorIdentity | quote }}
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+{{- end }}

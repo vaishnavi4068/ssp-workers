@@ -1,0 +1,6 @@
+apiVersion: v2
+name: spp-workers
+description: Helm chart for SPP Temporal Workers, Terraform K8s Job Runner (spp-tf-runner via Workload Identity), and Independent Drift CronJobs in namespace spp-platform
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

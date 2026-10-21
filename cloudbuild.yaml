@@ -1,0 +1,23 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    id: "build-spp-workers"
+    args:
+      - "build"
+      - "-f"
+      - "Dockerfile"
+      - "-t"
+      - "${_REGISTRY}/spp-workers:${_TAG}"
+      - "-t"
+      - "${_REGISTRY}/spp-workers:latest"
+      - "."
+
+images:
+  - "${_REGISTRY}/spp-workers:${_TAG}"
+  - "${_REGISTRY}/spp-workers:latest"
+
+substitutions:
+  _REGISTRY: "us-east1-docker.pkg.dev/microdrive-dev/spp"
+  _TAG: "v1.0.0"
+
+options:
+  logging: CLOUD_LOGGING_ONLY

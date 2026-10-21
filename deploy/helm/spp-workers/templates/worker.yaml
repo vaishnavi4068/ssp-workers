@@ -1,0 +1,69 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spp-workers
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app.kubernetes.io/name: spp-workers
+    app.kubernetes.io/part-of: spp-platform
+spec:
+  replicas: {{ .Values.replicas.worker }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: spp-workers
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spp-workers
+        app.kubernetes.io/part-of: spp-platform
+    spec:
+      serviceAccountName: {{ .Values.serviceAccounts.worker.name }}
+      nodeSelector:
+        {{- toYaml .Values.global.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.global.tolerations | nindent 8 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: spp-workers
+          image: "{{ .Values.images.registry }}/{{ .Values.images.repo }}:{{ .Values.images.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          env:
+            - name: TEMPORAL_ADDRESS
+              value: {{ .Values.temporal.address | quote }}
+            - name: TEMPORAL_NAMESPACE
+              value: {{ .Values.temporal.namespace | quote }}
+            - name: TEMPORAL_TASK_QUEUE
+              value: {{ .Values.temporal.taskQueue | quote }}
+            - name: SPP_K8S_NAMESPACE
+              value: {{ .Values.global.namespace | quote }}
+            - name: SPP_RUNNER_KSA
+              value: {{ .Values.serviceAccounts.runner.name | quote }}
+            - name: SPP_RUNNER_GSA
+              value: {{ .Values.serviceAccounts.runner.gsaEmail | quote }}
+            - name: SPP_RUNNER_IMAGE
+              value: "{{ .Values.images.registry }}/{{ .Values.images.repo }}:{{ .Values.images.tag }}"
+            - name: SPP_STATE_BUCKET
+              value: {{ .Values.terraform.stateBucket | quote }}
+            - name: GOOGLE_CLOUD_PROJECT
+              value: {{ .Values.global.gcpProjectId | quote }}
+            - name: GOOGLE_CLOUD_LOCATION
+              value: {{ .Values.global.gcpRegion | quote }}
+            - name: SPP_WORKER_USE_K8S
+              value: "true"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]

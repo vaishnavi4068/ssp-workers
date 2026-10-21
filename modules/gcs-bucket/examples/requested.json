@@ -1,0 +1,48 @@
+{
+  "api_version": "idp.spp/v1",
+  "kind": "gcs_bucket",
+  "action": "create",
+  "metadata": {
+    "apm_id": "APM12345",
+    "project_id": "spp-nonprod-orders-svc",
+    "environment": "nonprod",
+    "lob": "spp",
+    "data_sensitivity": "restricted",
+    "data_classification": "proprietary",
+    "owner": "bucket.owner@example.com",
+    "shared_mailbox": "spp-orders-team@example.com",
+    "requested_by": "requester@example.com",
+    "cost_center": "000000",
+    "tenancy": "dedicated",
+    "labels": {
+      "app": "orders"
+    },
+    "extensions": {
+      "spp": {
+        "sppml_version": "1.5"
+      }
+    }
+  },
+  "spec": {
+    "name": "spp-nonprod-orders-landing-a1b2",
+    "location": "us-east1",
+    "storage_class": "STANDARD",
+    "versioning": false,
+    "lifecycle_rules": [],
+    "access": [
+      {
+        "role": "roles/storage.objectAdmin",
+        "members": [
+          "serviceAccount:orders-pipeline@spp-nonprod-orders-svc.iam.gserviceaccount.com"
+        ]
+      },
+      {
+        "role": "roles/storage.objectViewer",
+        "members": [
+          "group:gcp-spp-nonprod-orders-read@example.com"
+        ]
+      }
+    ],
+    "purpose": "Landing zone for order events"
+  }
+}

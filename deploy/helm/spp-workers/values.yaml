@@ -1,0 +1,57 @@
+global:
+  gcpProjectId: "microdrive-dev"
+  gkeClusterName: "md-dev"
+  gcpRegion: "us-east1"
+  namespace: "spp-platform"
+  workloadIdentityPool: "microdrive-dev.svc.id.goog"
+  nodeSelector:
+    workload: "spp"
+  tolerations:
+    - key: "dedicated"
+      operator: "Equal"
+      value: "spp"
+      effect: "NoSchedule"
+
+images:
+  registry: "us-east1-docker.pkg.dev/microdrive-dev/spp"
+  repo: "spp-workers"
+  tag: "latest"
+  pullPolicy: "IfNotPresent"
+
+serviceAccounts:
+  create: true
+  worker:
+    name: "spp-workers"
+    gsaEmail: "spp-deploy@microdrive-dev.iam.gserviceaccount.com"
+  runner:
+    name: "spp-tf-runner"
+    gsaEmail: "spp-deploy@microdrive-dev.iam.gserviceaccount.com"
+
+temporal:
+  address: "temporal-frontend.spp-temporal.svc.cluster.local:7233"
+  namespace: "platform"
+  taskQueue: "idp-reconciler-v1"
+
+terraform:
+  stateBucket: "microdrive-dev-spp-tfstate"
+  jobActiveDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 86400
+  templateEnabled: false
+  sampleJob:
+    operationId: "op:af42f828-3378-5ee2-8e9b-2378d2314f97:r1:plan:1"
+    phase: "plan"
+    jobName: "tf-plan-eba5f9ebf4fafecad8e9"
+    stateUnitId: "af42f828-3378-5ee2-8e9b-2378d2314f97"
+    revisionId: "fa5d29a6-b406-5b66-81f2-8e45d24fb019"
+    revisionNo: 1
+    projectId: "microdrive-dev"
+    executorIdentity: "spp-deploy@microdrive-dev.iam.gserviceaccount.com"
+
+drift:
+  enabled: true
+  schedule: "0 */6 * * *"
+  projects:
+    - "microdrive-dev"
+
+replicas:
+  worker: 2
