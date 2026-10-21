@@ -9,6 +9,7 @@ set -euo pipefail
 #   Node Pool   : spp-pool (workload=spp, dedicated=spp:NoSchedule)
 #   Namespace   : spp-platform
 #   Registry    : us-east1-docker.pkg.dev/microdrive-dev/spp
+#   Images      : spp-workers:<tag>, spp-tf-runner:<tag>
 #   Runner KSA  : spp-tf-runner -> spp-deploy@microdrive-dev.iam.gserviceaccount.com
 # ---------------------------------------------------------------------------
 
@@ -18,17 +19,19 @@ CLUSTER="${GKE_CLUSTER_NAME:-md-dev}"
 NAMESPACE="${SPP_K8S_NAMESPACE:-spp-platform}"
 REGISTRY="${IMAGE_REGISTRY:-us-east1-docker.pkg.dev/${PROJECT_ID}/spp}"
 IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short HEAD 2>/dev/null || echo v1.0.0)}"
+RUNNER_IMAGE_TAG="${RUNNER_IMAGE_TAG:-${IMAGE_TAG}}"
 
 echo "=================================================================="
-echo "SPP Workers Deployment"
+echo "SPP Workers & Terraform Runner Deployment"
 echo "Project     : ${PROJECT_ID}"
 echo "Cluster     : ${CLUSTER} (${REGION})"
 echo "Namespace   : ${NAMESPACE}"
-echo "Registry    : ${REGISTRY}/spp-workers:${IMAGE_TAG}"
+echo "Worker Img  : ${REGISTRY}/spp-workers:${IMAGE_TAG}"
+echo "Runner Img  : ${REGISTRY}/spp-tf-runner:${RUNNER_IMAGE_TAG}"
 echo "Runner SA   : spp-tf-runner -> spp-deploy@microdrive-dev.iam.gserviceaccount.com"
 echo "=================================================================="
 
-echo "[1/4] Submitting Cloud Build to build & push spp-workers..."
+echo "[1/4] Submitting Cloud Build to build & push spp-workers and spp-tf-runner..."
 if [[ "${SKIP_BUILD:-false}" != "true" ]]; then
   gcloud builds submit \
     --project="${PROJECT_ID}" \
@@ -37,7 +40,7 @@ if [[ "${SKIP_BUILD:-false}" != "true" ]]; then
     --substitutions="_REGISTRY=${REGISTRY},_TAG=${IMAGE_TAG}" \
     .
 else
-  echo "SKIP_BUILD=true: using existing image ${REGISTRY}/spp-workers:${IMAGE_TAG}"
+  echo "SKIP_BUILD=true: using existing images spp-workers:${IMAGE_TAG} and spp-tf-runner:${RUNNER_IMAGE_TAG}"
 fi
 
 echo "[2/4] Fetching GKE cluster credentials for ${CLUSTER}..."
@@ -60,6 +63,7 @@ helm upgrade --install spp-workers ./deploy/helm/spp-workers \
   --create-namespace \
   --set images.registry="${REGISTRY}" \
   --set images.tag="${IMAGE_TAG}" \
+  --set images.runnerTag="${RUNNER_IMAGE_TAG}" \
   --wait \
   --timeout 10m
 

@@ -1,55 +1,48 @@
 # `ssp-workers` — SPP Temporal Workers, GCS Module (`modules/gcs-bucket`), and Drift Job
 
-Implements backlog items **WI-002** (Temporal workers & K8s Job runner), **WI-004** (GCS bucket Terraform module, placed at `modules/gcs-bucket` for now and to be split into `ssp-module-gcs-bucket` later), and **WI-005** (independent alert-only drift detection job) from `github.com/vaishnavi4068/ssp-cp` `docs/backlog/` against specifications in `github.com/vaishnavi4068/ssp-doc` (`ADR-SVC-001`, `ADR-AUT-001..003`, `ADR-GLB-004/006/007/008`, `specs/examples/gcs_bucket.gates.json`, `specs/data-model/spp_state_model.sql`).
+Implements backlog items **WI-002** (Temporal workers & K8s Job runner), **WI-004** (GCS bucket Terraform module at `modules/gcs-bucket`), and **WI-005** (independent alert-only drift detection job) from `github.com/vaishnavi4068/ssp-cp` `docs/backlog/` against specifications in `github.com/vaishnavi4068/ssp-doc` (`ADR-SVC-001`, `ADR-AUT-001..003`, `ADR-GLB-004/006/007/008`, `specs/examples/gcs_bucket.gates.json`, `specs/data-model/spp_state_model.sql`).
 
 ---
 
 ## Architecture & Scope Summary
 
 1. **Temporal Workers (`workers/`, WI-002):**
-   - **`GcsBucketProvisionWorkflow`**, **`RequestWorkflow`** (`req-<request_id>`), **`ApprovalGateWorkflow`** (`apr-<request_id>`), and **`StateUnitReconcilerWorkflow`** (`su-gcp-<project_id>`).
-   - Renders create-only `Expected` revisions (`manifest.json` + `terraform.tfvars.json`, `tfvars_collection = "gcs_buckets"`, `tf_address = 'module.gcs_bucket["{name}"]'`, seconds conversions `retention_days * 86400` and `soft_delete_retention_days * 86400`) to `gs://microdrive-dev-spp-tfstate/projects/<project>/expected/rev-NNNNNN/` with `ifGenerationMatch=0` (`INV-5`).
-   - Launches deterministic Kubernetes Jobs `tf-plan-<20hex>` and `tf-apply-<20hex>` in namespace `spp-platform` (`k8s_job_name(operation_id, phase)` matching SQL `idp.k8s_job_name`), reattaching idempotently on `409 AlreadyExists` (`INV-7`).
-   - Evaluates Terraform `plan.json` against the Rego policy bundle via `conftest` (`INV-4`) and requires an explicit human approval signal before `apply`.
+   - **`GcsBucketProvisionWorkflow`** (default task queue `spp-gcs-provisioning` matching `ssp-cp`), **`RequestWorkflow`** (`req-<request_id>`), **`ApprovalGateWorkflow`** (`apr-<request_id>`), and **`StateUnitReconcilerWorkflow`** (`su-gcp-<project_id>`).
+   - Accepts both `approved_spec` (dispatched by `ssp-cp`) and `approved_doc` payload keys.
+   - Uses **real GCS** (`RealGcsObjectStore` via `google-cloud-storage` + Workload Identity on `gs://microdrive-dev-spp-tfstate` with `if_generation_match=0`) and **real AlloyDB** (`AlloyDbStateStore` via `psycopg` connecting to `10.80.140.2:5432`, db `spp_platform`, schema `idp`, password from `SPP_ALLOYDB_PASSWORD` / K8s Secret `spp-alloydb-credentials`) whenever configured, keeping `InMemoryStateStore` only for unit/replay tests.
+   - Launches real deterministic Kubernetes Jobs `tf-plan-<20hex>` and `tf-apply-<20hex>` in namespace `spp-platform` under KSA `spp-tf-runner` (`iam.gke.io/gcp-service-account: spp-deploy@microdrive-dev.iam.gserviceaccount.com`), reattaching idempotently on `409 AlreadyExists`, waiting for completion, and reading `plan.json` and logs from GCS.
+   - Evaluates Terraform `plan.json` against `modules/gcs-bucket/policies` via `conftest` (`INV-4`) and waits for human approval signal (`approve_apply` / `human_approval`) before running `tf-apply-<20hex>`.
    - Records `Observed` state in `idp.observation` and upserts `< 2000`-byte non-sensitive projections in `idp.resource_observed` only when `projection_sha256` changes.
    - **Rollback:** Restores and re-applies the last approved specification as a new `Expected` revision (`rev-(N+1)`).
    - **Decommission:** Refuses non-empty buckets (`bucket_not_empty`) and never force-deletes (`force_destroy = false`, `GCS-DEL-001`).
 
-2. **Terraform GCS Bucket Module (`modules/gcs-bucket/`, WI-004):**
-   - Enforces `location = "us-east1"` only (`ADR-SVC-001 GR-1`), CMEK encryption (`kms_key_name` / `default_kms_key_name` in `locations/us-east1`, default `projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek` with 90-day rotation), `uniform_bucket_level_access = true`, `public_access_prevention = "enforced"`, `versioning`, optional `lifecycle_rules` defaulting to `[]`, optional `retention_policy` (`is_locked = false` by default, `GCS-RET-003`), `force_destroy = false` (`GCS-DEL-001`), and the **8 mandatory labels** (`sppappid` matching `^apm[0-9]{5}$` [lowercase `apm` + 5 digits, from `APM` + 5 digits], `costcenter`, `environmenttype` in `nonprod|prod`, `primarylob`, `datasensitivity`, `owner`, `provisionedby`, `idp_resource_id`; forbidding `environmentsubtype`).
-   - GCS backend configured for `gs://microdrive-dev-spp-tfstate`.
+2. **Terraform Runner Image (`Dockerfile.runner`, `workers/runner_entrypoint.py`):**
+   - Dedicated runner image (`us-east1-docker.pkg.dev/microdrive-dev/spp/spp-tf-runner:<tag>`, resolved from `SPP_RUNNER_IMAGE` / `SPP_RUNNER_IMAGE_TAG` rather than `:latest`) with `terraform` (`1.10.5`, `>= 1.9`), `conftest` (`v0.56.0`), `opa` (`v0.69.0`), `google-cloud-cli` (`gcloud`/`gsutil`), and `modules/gcs-bucket` baked in.
+   - Inside each Job: downloads Expected `terraform.tfvars.json` from GCS, runs `terraform init` against `gs://microdrive-dev-spp-tfstate` (`prefix=projects/<project_id>`), runs `terraform plan -out=planfile -detailed-exitcode`, `terraform show -json planfile > plan.json`, uploads `plan.json` and `planfile.tfplan` to GCS, runs `conftest test` on `plan.json`, and in `apply` Jobs applies the saved `planfile` and uploads logs to `gs://microdrive-dev-spp-tfstate/projects/<project_id>/logs/<job_name>.log`.
 
-3. **Independent Drift Detection Job (`workers/drift.py`, `drift-<project_id>`, WI-005):**
-   - Runs `tf-refresh-plan-<20hex>` / reads live bucket state via GCP Storage API, writes snapshot to `gs://microdrive-dev-spp-tfstate/projects/<project_id>/observed/scan-<window>/plan.json` without advancing `state_serial`, compares `Expected` vs. `Observed` by JSON pointer minus `drift_ignore_paths` (`['/force_destroy']`), and records `idp.drift_finding` rows in **strictly alert-only mode** (`status = 'OPEN'`, zero auto-remediation).
+3. **Terraform GCS Bucket Module (`modules/gcs-bucket/`, WI-004):**
+   - Enforces `location = "us-east1"` only (`ADR-SVC-001 GR-1`), CMEK encryption (`projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek` with 90-day rotation), `uniform_bucket_level_access = true`, `public_access_prevention = "enforced"`, `versioning`, optional `lifecycle_rules` defaulting to `[]`, optional `retention_policy` (`is_locked = false` by default, `GCS-RET-003`), `force_destroy = false` (`GCS-DEL-001`), and the **8 mandatory labels** (`sppappid` matching `^apm[0-9]{5}$`, `costcenter`, `environmenttype` in `nonprod|prod`, `primarylob`, `datasensitivity`, `owner`, `provisionedby`, `idp_resource_id`; forbidding `environmentsubtype`).
 
-4. **Deployment (`Dockerfile`, `cloudbuild.yaml`, `deploy/helm/spp-workers/`):**
-   - Cloud Build publishes `us-east1-docker.pkg.dev/microdrive-dev/spp/spp-workers:<sha>`.
-   - Helm chart targets namespace `spp-platform` on GKE `md-dev` (`nodeSelector: workload=spp`, toleration `dedicated=spp:NoSchedule`) with Kubernetes ServiceAccount `spp-tf-runner` annotated with `iam.gke.io/gcp-service-account: spp-deploy@microdrive-dev.iam.gserviceaccount.com` (Workload Identity, no keys).
-   - Connects to live AlloyDB (`10.80.140.2:5432`, database `spp_platform`, user `postgres`) with password synced at deploy time from Secret Manager secret `spp-alloydb-postgres-password` into K8s Secret `spp-alloydb-credentials` (zero secrets committed in repo).
+4. **Independent Drift Detection Job (`workers/drift.py`, `drift-<project_id>`, WI-005):**
+   - Reads live bucket state via GCP Storage API (`read_live_gcs_bucket_via_gcp_api`), writes snapshot to `gs://microdrive-dev-spp-tfstate/projects/<project_id>/observed/scan-<window>/plan.json` without advancing `state_serial`, compares `Expected` vs. `Observed` by JSON pointer minus `drift_ignore_paths` (`['/force_destroy']`), and records `idp.drift_finding` rows in **strictly alert-only mode** (`status = 'OPEN'`, zero auto-remediation).
 
 ---
 
-## Deploy Prerequisites (Operator Checklist)
+## Runner & Worker Image Build Instructions
 
-1. **Workload Identity IAM Binding (`spp-deploy@microdrive-dev.iam.gserviceaccount.com`):**
-   ```bash
-   gcloud iam service-accounts add-iam-policy-binding \
-     spp-deploy@microdrive-dev.iam.gserviceaccount.com \
-     --project=microdrive-dev \
-     --role="roles/iam.workloadIdentityUser" \
-     --member="serviceAccount:microdrive-dev.svc.id.goog[spp-platform/spp-tf-runner]"
+Build and push both `spp-workers:<tag>` and `spp-tf-runner:<tag>` via Cloud Build (`cloudbuild.yaml`), then upgrade the Helm release in `spp-platform`:
 
-   gcloud iam service-accounts add-iam-policy-binding \
-     spp-deploy@microdrive-dev.iam.gserviceaccount.com \
-     --project=microdrive-dev \
-     --role="roles/iam.workloadIdentityUser" \
-     --member="serviceAccount:microdrive-dev.svc.id.goog[spp-platform/spp-workers]"
-   ```
-2. **State Bucket & Per-Project Executor Impersonation:**
-   - Ensure `gs://microdrive-dev-spp-tfstate` exists in `us-east1` with object versioning and CMEK (`projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek`) enabled, and grant `spp-deploy@microdrive-dev.iam.gserviceaccount.com` `roles/storage.objectAdmin` on `gs://microdrive-dev-spp-tfstate`.
-   - Grant `spp-deploy@microdrive-dev.iam.gserviceaccount.com` `roles/iam.serviceAccountTokenCreator` on target project executor service accounts (`idp-tf@<project_id>.iam.gserviceaccount.com`).
-3. **Cloud KMS CMEK Key (`projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek`):**
-   - Configured with 90-day rotation in `us-east1`; GCS service agent and `spp-deploy@microdrive-dev.iam.gserviceaccount.com` already have `roles/cloudkms.cryptoKeyEncrypterDecrypter`.
-4. **Temporal Namespace & Live AlloyDB (`spp_platform` at `10.80.140.2:5432`):**
-   - Register Temporal namespace `platform` on `temporal-frontend.spp-temporal.svc.cluster.local:7233`.
-   - Live AlloyDB (`10.80.140.2:5432`, db `spp_platform`, user `postgres`) reads its password from GCP Secret Manager secret `spp-alloydb-postgres-password` (synced to K8s Secret `spp-alloydb-credentials` by `scripts/deploy.sh`).
+```bash
+IMAGE_TAG="$(git rev-parse --short HEAD)"
+
+# 1. Build & push both spp-workers:$IMAGE_TAG and spp-tf-runner:$IMAGE_TAG via Cloud Build
+gcloud builds submit \
+  --project=microdrive-dev \
+  --region=us-east1 \
+  --config=cloudbuild.yaml \
+  --substitutions="_REGISTRY=us-east1-docker.pkg.dev/microdrive-dev/spp,_TAG=${IMAGE_TAG}" \
+  .
+
+# 2. Or run the full deployment script (syncs spp-alloydb-postgres-password and runs helm upgrade --install)
+IMAGE_TAG="${IMAGE_TAG}" ./scripts/deploy.sh
+```

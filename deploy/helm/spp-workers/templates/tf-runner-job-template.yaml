@@ -39,7 +39,7 @@ spec:
         fsGroup: 10001
       containers:
         - name: tf-runner
-          image: "{{ .Values.images.registry }}/{{ .Values.images.repo }}:{{ .Values.images.tag }}"
+          image: "{{ .Values.images.registry }}/{{ .Values.images.runnerRepo }}:{{ .Values.images.runnerTag | default .Values.images.tag }}"
           imagePullPolicy: {{ .Values.images.pullPolicy }}
           command: ["python", "-m", "workers.runner_entrypoint"]
           env:
@@ -57,9 +57,13 @@ spec:
               value: {{ .Values.terraform.sampleJob.projectId | quote }}
             - name: SPP_STATE_BUCKET
               value: {{ .Values.terraform.stateBucket | quote }}
+            - name: SPP_RUNNER_DRY_RUN
+              value: "false"
+            - name: GOOGLE_CLOUD_PROJECT
+              value: {{ .Values.terraform.sampleJob.projectId | quote }}
             - name: GOOGLE_CLOUD_LOCATION
               value: {{ .Values.global.gcpRegion | quote }}
-            - name: GOOGLE_IMPERSONATE_SERVICE_ACCOUNT
+            - name: SPP_EXECUTOR_IDENTITY
               value: {{ .Values.terraform.sampleJob.executorIdentity | quote }}
           resources:
             requests:

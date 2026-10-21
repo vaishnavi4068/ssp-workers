@@ -837,4 +837,191 @@ def test_helm_values_and_rbac_configure_spp_deploy_workload_identity():
     assert values["alloydb"]["database"] == "spp_platform"
     assert values["alloydb"]["username"] == "postgres"
     assert values["alloydb"]["gcpSecretManagerPasswordSecret"] == "spp-alloydb-postgres-password"
+    assert values["temporal"]["taskQueue"] == "spp-gcs-provisioning"
+    assert values["images"]["runnerRepo"] == "spp-tf-runner"
+    assert values["images"]["tag"] != "latest"
+
+
+def test_worker_config_defaults_and_runner_image_tag_resolution(monkeypatch: pytest.MonkeyPatch):
+    from workers.config import WorkerConfig, resolve_database_url, resolve_runner_image
+
+    monkeypatch.delenv("TEMPORAL_TASK_QUEUE", raising=False)
+    monkeypatch.delenv("SPP_RUNNER_IMAGE", raising=False)
+    monkeypatch.setenv("SPP_RUNNER_IMAGE_TAG", "eb6c14b")
+
+    cfg = WorkerConfig()
+    assert cfg.task_queue == "spp-gcs-provisioning"
+    assert cfg.runner_image == "us-east1-docker.pkg.dev/microdrive-dev/spp/spp-tf-runner:eb6c14b"
+    assert not cfg.runner_image.endswith(":latest")
+
+    # Verify AlloyDB URL resolution from SPP_ALLOYDB_* env vars
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("SPP_ALLOYDB_HOST", "10.80.140.2")
+    monkeypatch.setenv("SPP_ALLOYDB_PORT", "5432")
+    monkeypatch.setenv("SPP_ALLOYDB_DB", "spp_platform")
+    monkeypatch.setenv("SPP_ALLOYDB_USER", "postgres")
+    monkeypatch.setenv("SPP_ALLOYDB_PASSWORD", "test-secret-pw")
+    db_url = resolve_database_url()
+    assert db_url == "postgresql://postgres:test-secret-pw@10.80.140.2:5432/spp_platform?sslmode=require"
+
+
+def test_real_gcs_object_store_if_generation_match_zero():
+    from workers.db import RealGcsObjectStore
+
+    class FakeBlob:
+        def __init__(self, name: str, store: dict[str, bytes]):
+            self.name = name
+            self._store = store
+            self.generation = 1729599999000000
+            self.size = 0
+            self.updated = None
+
+        def upload_from_string(
+            self,
+            data: bytes,
+            content_type: str | None = None,
+            if_generation_match: int | None = None,
+        ) -> None:
+            if if_generation_match == 0 and self.name in self._store:
+                class PreconditionFailed(Exception):
+                    pass
+
+                raise PreconditionFailed("412 Precondition Failed: ifGenerationMatch=0")
+            self._store[self.name] = data
+            self.size = len(data)
+
+        def exists(self) -> bool:
+            return self.name in self._store
+
+        def download_as_text(self, encoding: str = "utf-8") -> str:
+            return self._store[self.name].decode(encoding)
+
+    class FakeBucket:
+        def __init__(self):
+            self.blobs: dict[str, bytes] = {}
+
+        def blob(self, name: str) -> FakeBlob:
+            return FakeBlob(name, self.blobs)
+
+    class FakeStorageClient:
+        def __init__(self):
+            self.buckets: dict[str, FakeBucket] = {}
+
+        def bucket(self, name: str) -> FakeBucket:
+            return self.buckets.setdefault(name, FakeBucket())
+
+    gcs = RealGcsObjectStore(project_id="microdrive-dev", client=FakeStorageClient())
+    uri = "gs://microdrive-dev-spp-tfstate/projects/spp-nonprod-orders-svc/expected/rev-000001/terraform.tfvars.json"
+    gen, sha = gcs.put_object(uri, {"gcs_buckets": {"b1": {"location": "us-east1"}}}, if_generation_match=0)
+    assert gen == 1729599999000000
+    assert len(sha) == 64
+    assert gcs.get_json(uri) == {"gcs_buckets": {"b1": {"location": "us-east1"}}}
+
+    with pytest.raises(GCSArtifactExistError):
+        gcs.put_object(uri, {"gcs_buckets": {}}, if_generation_match=0)
+
+
+@pytest.mark.asyncio
+async def test_workflow_accepts_approved_spec_and_executes_real_k8s_job_path():
+    """Verify GcsBucketProvisionWorkflow accepts `approved_spec` (sent by ssp-cp) and run_tf_plan/apply_job_activity
+    actually invokes launch_or_reattach_k8s_job when use_k8s=True, reading plan.json from GCS.
+    """
+    doc = _sample_approved_gcs_doc()
+    reg = DEFAULT_STORE.register_approved_resource(
+        approved_doc=doc,
+        state_unit_id="af42f828-3378-5ee2-8e9b-2378d2314f97",
+        resource_id="9478bcfc-c2cf-583b-8bd8-096476647840",
+        request_id="22120aab-3834-51d3-b631-0f7d3c43f56e",
+        approval_id="761d8bf8-d23e-5da3-8e52-02e6eb6c2afb",
+    )
+    rendered = await render_expected_revision_activity(
+        {
+            "approved_spec": doc,
+            "state_unit_id": reg["state_unit"]["state_unit_id"],
+            "resource_id": "9478bcfc-c2cf-583b-8bd8-096476647840",
+            "request_id": "22120aab-3834-51d3-b631-0f7d3c43f56e",
+            "approval_id": "761d8bf8-d23e-5da3-8e52-02e6eb6c2afb",
+            "revision_id": "fa5d29a6-b406-5b66-81f2-8e45d24fb019",
+        }
+    )
+    rev_id = rendered["revision_id"]
+
+    # Pre-stage plan.json in GCS as the runner K8s Job would upload it
+    plan_uri = "gs://microdrive-dev-spp-tfstate/projects/spp-nonprod-orders-svc/expected/rev-000001/plan.json"
+    plan_doc = {
+        "format_version": "1.2",
+        "terraform_version": "1.10.5",
+        "resource_changes": [
+            {
+                "address": 'module.gcs_bucket["spp-nonprod-orders-landing-a1b2"].google_storage_bucket.this',
+                "type": "google_storage_bucket",
+                "change": {
+                    "actions": ["create"],
+                    "after": {
+                        "name": "spp-nonprod-orders-landing-a1b2",
+                        "location": "us-east1",
+                        "uniform_bucket_level_access": True,
+                        "public_access_prevention": "enforced",
+                        "force_destroy": False,
+                        "encryption": [
+                            {
+                                "default_kms_key_name": "projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek",
+                            }
+                        ],
+                        "labels": doc["metadata"]["labels"],
+                    },
+                },
+            }
+        ],
+    }
+    DEFAULT_STORE.put_gcs_object(plan_uri, plan_doc)
+
+    class FakeJobStatus:
+        succeeded = 1
+        failed = 0
+
+    class FakeJobObj:
+        status = FakeJobStatus()
+
+    class FakeApiError(Exception):
+        def __init__(self, status: int):
+            self.status = status
+
+    class FakeBatchApi:
+        def __init__(self):
+            self.created_jobs: list[str] = []
+
+        def read_namespaced_job(self, name: str, namespace: str):
+            raise FakeApiError(404)
+
+        def create_namespaced_job(self, namespace: str, body: dict[str, Any]):
+            self.created_jobs.append(body["metadata"]["name"])
+
+        def read_namespaced_job_status(self, name: str, namespace: str):
+            return FakeJobObj()
+
+    fake_batch = FakeBatchApi()
+
+    plan_res = await run_tf_plan_job_activity(
+        {
+            "revision_id": rev_id,
+            "use_k8s": True,
+            "k8s_batch_api": fake_batch,
+        }
+    )
+    assert plan_res["succeeded"] is True
+    assert plan_res["k8s_job_name"] == "tf-plan-eba5f9ebf4fafecad8e9"
+    assert "tf-plan-eba5f9ebf4fafecad8e9" in fake_batch.created_jobs
+
+    apply_res = await run_tf_apply_job_activity(
+        {
+            "revision_id": rev_id,
+            "use_k8s": True,
+            "k8s_batch_api": fake_batch,
+        }
+    )
+    assert apply_res["succeeded"] is True
+    assert apply_res["k8s_job_name"] == "tf-apply-b85d57b4511c03e98373"
+    assert "tf-apply-b85d57b4511c03e98373" in fake_batch.created_jobs
+
 

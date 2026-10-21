@@ -71,8 +71,9 @@ class GcsBucketProvisionWorkflow:
 
     @workflow.run
     async def run(self, params: dict[str, Any]) -> dict[str, Any]:
-        action = params.get("action") or (params.get("approved_doc") or {}).get("action", "create")
-        project_id = params.get("project_id") or ((params.get("approved_doc") or {}).get("metadata") or {}).get(
+        approved_payload = params.get("approved_spec") or params.get("approved_doc") or {}
+        action = params.get("action") or approved_payload.get("action", "create")
+        project_id = params.get("project_id") or (approved_payload.get("metadata") or {}).get(
             "project_id", "microdrive-dev"
         )
         state_unit_id = params.get("state_unit_id")
@@ -91,7 +92,7 @@ class GcsBucketProvisionWorkflow:
 
         # Step 2: Decommission guard — refuse non-empty buckets; never force-delete (GCS-DEL-001)
         if action in {"delete", "decommission"}:
-            bucket_name = params.get("bucket_name") or ((params.get("approved_doc") or {}).get("spec") or {}).get("name", "")
+            bucket_name = params.get("bucket_name") or (approved_payload.get("spec") or {}).get("name", "")
             empty_check = await workflow.execute_activity(
                 "check_bucket_empty_for_decommission_activity",
                 {

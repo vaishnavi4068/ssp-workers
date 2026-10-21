@@ -13,7 +13,8 @@ from typing import Any
 
 from temporalio import activity
 
-from .db import DEFAULT_STORE, InMemoryStateStore
+from .config import is_real_gcs_configured, resolve_runner_image
+from .db import AlloyDbStateStore, DEFAULT_STORE, InMemoryStateStore, get_active_store
 from .k8s_runner import build_tf_runner_job_manifest
 from .models import (
     K8S_NAMESPACE,
@@ -24,6 +25,8 @@ from .models import (
     build_operation_id,
     build_snapshot_uri,
     build_state_uri,
+    canonical_sha256,
+    convert_approved_gcs_bucket_to_expected_entry,
     k8s_job_name,
 )
 
@@ -305,7 +308,7 @@ def execute_drift_scan_for_project(
     *,
     project_id: str,
     window: str,
-    store: InMemoryStateStore | None = None,
+    store: AlloyDbStateStore | InMemoryStateStore | None = None,
     state_unit_id: str | None = None,
     revision_id: str | None = None,
     revision_no: int | None = None,
@@ -314,34 +317,43 @@ def execute_drift_scan_for_project(
     observation_id: str | None = None,
     drift_id_override: str | None = None,
     observed_overrides_by_resource: dict[str, dict[str, Any]] | None = None,
-    use_gcp_api: bool = False,
+    use_gcp_api: bool | None = None,
 ) -> dict[str, Any]:
     """Run an independent refresh scan for a project, compare Observed vs Expected minus drift_ignore_paths,
     and write alert-only drift_finding rows (NEVER auto-remediating or launching tf-apply-*).
     """
-    st = store or DEFAULT_STORE
-    su = None
-    if state_unit_id and state_unit_id in st.state_units:
-        su = st.state_units[state_unit_id]
-    else:
-        for candidate in st.state_units.values():
-            if candidate["scope_id"] == project_id:
-                su = candidate
-                break
+    st = store or get_active_store()
+    effective_use_gcp_api = is_real_gcs_configured() if use_gcp_api is None else bool(use_gcp_api)
+
+    su = st.get_state_unit(state_unit_id=state_unit_id, project_id=project_id)
     if su is None:
         su = st.ensure_state_unit(project_id=project_id, state_unit_id=state_unit_id)
 
     su_id = su["state_unit_id"]
-    rev_no = revision_no if revision_no is not None else (su["applied_expected_rev"] or su["current_expected_rev"] or 1)
+    rev_no = int(revision_no if revision_no is not None else (su.get("applied_expected_rev") or su.get("current_expected_rev") or 1))
 
-    rev_row = None
-    if revision_id and revision_id in st.expected_revisions:
-        rev_row = st.expected_revisions[revision_id]
+    if isinstance(st, AlloyDbStateStore):
+        rev_row = (
+            st.get_expected_revision(revision_id)
+            if revision_id
+            else st.get_latest_expected_revision_for_state_unit(su_id, rev_no)
+        )
+        active_resources = st.list_active_resources_for_state_unit(su_id)
     else:
-        for er in st.expected_revisions.values():
-            if er["state_unit_id"] == su_id and er["revision_no"] == rev_no:
-                rev_row = er
-                break
+        rev_row = None
+        if revision_id and revision_id in st.expected_revisions:
+            rev_row = st.expected_revisions[revision_id]
+        else:
+            for er in st.expected_revisions.values():
+                if er["state_unit_id"] == su_id and er["revision_no"] == rev_no:
+                    rev_row = er
+                    break
+        active_resources = [
+            r
+            for r in st.resources.values()
+            if r["state_unit_id"] == su_id and r["lifecycle"] not in {"deleted", "abandoned"}
+        ]
+
     rev_id = revision_id or (rev_row["revision_id"] if rev_row else "77b88e4c-84fe-5050-a395-060f012d17f0")
 
     operation_id = build_operation_id(su_id, rev_no, "refresh_plan", window)
@@ -359,40 +371,49 @@ def execute_drift_scan_for_project(
         project_id=project_id,
         executor_identity=su["executor_identity"],
         run_key=window,
-        namespace=K8S_NAMESPACE,
+        namespace=os.getenv("SPP_K8S_NAMESPACE", K8S_NAMESPACE),
         service_account_name=os.getenv("SPP_RUNNER_KSA", RUNNER_KSA),
         runner_gsa_email=os.getenv("SPP_RUNNER_GSA", RUNNER_GSA),
+        runner_image=resolve_runner_image(),
         state_bucket=su["state_bucket"],
     )
 
     tfvars: dict[str, Any] = {}
-    if rev_row and rev_row.get("artifact_uri") in st.gcs_objects:
-        tfvars = st.get_gcs_json(rev_row["artifact_uri"])
+    if rev_row and rev_row.get("artifact_uri"):
+        try:
+            tfvars = st.get_gcs_json(rev_row["artifact_uri"])
+        except Exception:
+            tfvars = {}
 
     all_findings: list[dict[str, Any]] = []
     observed_resources: list[dict[str, Any]] = []
     overrides = observed_overrides_by_resource or {}
 
-    # Inspect each active resource in the state unit
-    for res in st.resources.values():
-        if res["state_unit_id"] != su_id or res["lifecycle"] in {"deleted", "abandoned"}:
-            continue
+    for res in active_resources:
         res_id = res["resource_id"]
         kind = res["kind"]
         name = res["name"]
-        kind_meta = st.resource_kinds[kind]
+        kind_meta = st.resource_kinds.get(kind) or st.resource_kinds["gcs_bucket"]
         collection = kind_meta["tfvars_collection"]
         ignore_paths = kind_meta["drift_ignore_paths"]
 
         expected_entry = copy.deepcopy((tfvars.get(collection) or {}).get(name) or {})
-        if not expected_entry and res["current_approval_id"] in st.approvals:
-            apr = st.approvals[res["current_approval_id"]]
-            expected_entry = copy.deepcopy(apr["approved_spec"].get("spec") or {})
+        if not expected_entry:
+            approved_spec = res.get("approved_spec")
+            if not approved_spec and isinstance(st, InMemoryStateStore) and res.get("current_approval_id") in st.approvals:
+                approved_spec = st.approvals[res["current_approval_id"]]["approved_spec"]
+            if approved_spec:
+                if kind == "gcs_bucket":
+                    expected_entry = convert_approved_gcs_bucket_to_expected_entry(approved_spec)
+                else:
+                    expected_entry = copy.deepcopy(approved_spec.get("spec") or {})
 
-        if use_gcp_api and kind == "gcs_bucket":
+        if effective_use_gcp_api and kind == "gcs_bucket":
             raw_cloud = read_live_gcs_bucket_via_gcp_api(name, project_id)
-        else:
+        elif isinstance(st, InMemoryStateStore):
             raw_cloud = copy.deepcopy(st.cloud_buckets.get(name) or expected_entry)
+        else:
+            raw_cloud = copy.deepcopy(expected_entry)
 
         if name in overrides:
             raw_cloud.update(copy.deepcopy(overrides[name]))
@@ -407,8 +428,6 @@ def execute_drift_scan_for_project(
             cloud_id = f"projects/_/buckets/{name}"
         else:
             projection = copy.deepcopy(raw_cloud)
-            from .models import canonical_sha256
-
             proj_sha = canonical_sha256(projection)
             cloud_id = f"projects/{project_id}/instances/{name}"
 
@@ -550,7 +569,7 @@ async def run_drift_scan_activity(params: dict[str, Any]) -> dict[str, Any]:
         observation_id=params.get("observation_id"),
         drift_id_override=params.get("drift_id"),
         observed_overrides_by_resource=params.get("observed_overrides"),
-        use_gcp_api=bool(params.get("use_gcp_api", False)),
+        use_gcp_api=params.get("use_gcp_api"),
     )
 
 

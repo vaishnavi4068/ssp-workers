@@ -53,12 +53,18 @@ spec:
                   value: {{ $projectId | quote }}
                 - name: SPP_STATE_BUCKET
                   value: {{ $.Values.terraform.stateBucket | quote }}
+                - name: GOOGLE_CLOUD_PROJECT
+                  value: {{ $.Values.global.gcpProjectId | quote }}
                 - name: GOOGLE_CLOUD_LOCATION
                   value: {{ $.Values.global.gcpRegion | quote }}
                 - name: SPP_RUNNER_KSA
                   value: {{ $.Values.serviceAccounts.runner.name | quote }}
                 - name: SPP_RUNNER_GSA
                   value: {{ $.Values.serviceAccounts.runner.gsaEmail | quote }}
+                - name: SPP_RUNNER_IMAGE_TAG
+                  value: {{ $.Values.images.runnerTag | default $.Values.images.tag | quote }}
+                - name: SPP_RUNNER_IMAGE
+                  value: "{{ $.Values.images.registry }}/{{ $.Values.images.runnerRepo }}:{{ $.Values.images.runnerTag | default $.Values.images.tag }}"
                 - name: SPP_DEFAULT_KMS_KEY_NAME
                   value: {{ $.Values.terraform.defaultKmsKeyName | quote }}
                 - name: SPP_ALLOYDB_HOST
@@ -77,6 +83,10 @@ spec:
                       name: {{ $.Values.alloydb.k8sSecretName | quote }}
                       key: {{ $.Values.alloydb.k8sSecretKey | quote }}
                       optional: true
+                - name: SPP_WORKER_USE_GCS
+                  value: "true"
+                - name: SPP_WORKER_USE_DB
+                  value: "true"
               resources:
                 requests:
                   cpu: "250m"
