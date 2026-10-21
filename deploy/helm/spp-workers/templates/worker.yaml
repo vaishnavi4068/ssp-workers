@@ -45,8 +45,14 @@ spec:
               value: {{ .Values.serviceAccounts.runner.name | quote }}
             - name: SPP_RUNNER_GSA
               value: {{ .Values.serviceAccounts.runner.gsaEmail | quote }}
+            - name: SPP_IMAGE_REGISTRY
+              value: {{ .Values.images.registry | quote }}
+            - name: SPP_RUNNER_IMAGE_REPO
+              value: {{ .Values.images.runnerRepo | quote }}
+            - name: SPP_RUNNER_IMAGE_TAG
+              value: {{ .Values.images.runnerTag | default .Values.images.tag | quote }}
             - name: SPP_RUNNER_IMAGE
-              value: "{{ .Values.images.registry }}/{{ .Values.images.repo }}:{{ .Values.images.tag }}"
+              value: "{{ .Values.images.registry }}/{{ .Values.images.runnerRepo }}:{{ .Values.images.runnerTag | default .Values.images.tag }}"
             - name: SPP_STATE_BUCKET
               value: {{ .Values.terraform.stateBucket | quote }}
             - name: SPP_DEFAULT_KMS_KEY_NAME
@@ -72,6 +78,10 @@ spec:
             - name: GOOGLE_CLOUD_LOCATION
               value: {{ .Values.global.gcpRegion | quote }}
             - name: SPP_WORKER_USE_K8S
+              value: "true"
+            - name: SPP_WORKER_USE_GCS
+              value: "true"
+            - name: SPP_WORKER_USE_DB
               value: "true"
           resources:
             requests:

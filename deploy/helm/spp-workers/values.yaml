@@ -15,7 +15,9 @@ global:
 images:
   registry: "us-east1-docker.pkg.dev/microdrive-dev/spp"
   repo: "spp-workers"
-  tag: "latest"
+  runnerRepo: "spp-tf-runner"
+  tag: "v1.0.0"
+  runnerTag: ""
   pullPolicy: "IfNotPresent"
 
 serviceAccounts:
@@ -30,7 +32,7 @@ serviceAccounts:
 temporal:
   address: "temporal-frontend.spp-temporal.svc.cluster.local:7233"
   namespace: "platform"
-  taskQueue: "idp-reconciler-v1"
+  taskQueue: "spp-gcs-provisioning"
 
 terraform:
   stateBucket: "microdrive-dev-spp-tfstate"

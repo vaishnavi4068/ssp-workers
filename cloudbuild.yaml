@@ -11,9 +11,23 @@ steps:
       - "${_REGISTRY}/spp-workers:latest"
       - "."
 
+  - name: "gcr.io/cloud-builders/docker"
+    id: "build-spp-tf-runner"
+    args:
+      - "build"
+      - "-f"
+      - "Dockerfile.runner"
+      - "-t"
+      - "${_REGISTRY}/spp-tf-runner:${_TAG}"
+      - "-t"
+      - "${_REGISTRY}/spp-tf-runner:latest"
+      - "."
+
 images:
   - "${_REGISTRY}/spp-workers:${_TAG}"
   - "${_REGISTRY}/spp-workers:latest"
+  - "${_REGISTRY}/spp-tf-runner:${_TAG}"
+  - "${_REGISTRY}/spp-tf-runner:latest"
 
 substitutions:
   _REGISTRY: "us-east1-docker.pkg.dev/microdrive-dev/spp"

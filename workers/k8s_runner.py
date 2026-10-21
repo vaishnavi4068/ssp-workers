@@ -12,15 +12,17 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from .config import resolve_runner_image
 from .models import (
     K8S_NAMESPACE,
     RUNNER_GSA,
     RUNNER_KSA,
     STATE_BUCKET,
+    build_artifact_uri,
     build_logs_uri,
-    build_operation_id,
     build_plan_uri,
     build_snapshot_uri,
+    format_revision_dir,
     k8s_job_name,
 )
 
@@ -40,9 +42,10 @@ def build_tf_runner_job_manifest(
     namespace: str = K8S_NAMESPACE,
     service_account_name: str = RUNNER_KSA,
     runner_gsa_email: str = RUNNER_GSA,
-    runner_image: str = "us-east1-docker.pkg.dev/microdrive-dev/spp/spp-workers:latest",
+    runner_image: str | None = None,
     state_bucket: str = STATE_BUCKET,
     gcp_region: str = "us-east1",
+    allow_destroy: bool = False,
     active_deadline_seconds: int = 1800,
 ) -> dict[str, Any]:
     """Construct the deterministic Kubernetes Job manifest for a Terraform operation in namespace spp-platform.
@@ -53,9 +56,13 @@ def build_tf_runner_job_manifest(
     - serviceAccountName = spp-tf-runner (annotated with iam.gke.io/gcp-service-account: spp-deploy@microdrive-dev.iam.gserviceaccount.com)
     - nodeSelector: workload=spp, toleration: dedicated=spp:NoSchedule
     - Non-root securityContext (UID/GID 10001)
-    - Ambient Workload Identity + GOOGLE_IMPERSONATE_SERVICE_ACCOUNT (zero JSON keys)
+    - Runner image resolved from config/deployed tag (not hardcoded :latest)
     """
     job_name = k8s_job_name(operation_id, phase)
+    effective_image = runner_image or resolve_runner_image()
+    artifact_uri = build_artifact_uri(project_id, revision_no, state_bucket)
+    rev_dir = format_revision_dir(revision_no)
+    planfile_uri = f"gs://{state_bucket}/projects/{project_id}/expected/{rev_dir}/planfile.tfplan"
     logs_uri = build_logs_uri(project_id, job_name, state_bucket)
     plan_uri = (
         build_snapshot_uri(project_id, run_key, state_bucket)
@@ -116,7 +123,7 @@ def build_tf_runner_job_manifest(
                     "containers": [
                         {
                             "name": "tf-runner",
-                            "image": runner_image,
+                            "image": effective_image,
                             "imagePullPolicy": "IfNotPresent",
                             "command": ["python", "-m", "workers.runner_entrypoint"],
                             "env": [
@@ -128,10 +135,15 @@ def build_tf_runner_job_manifest(
                                 {"name": "SPP_PROJECT_ID", "value": project_id},
                                 {"name": "SPP_RUN_KEY", "value": run_key},
                                 {"name": "SPP_STATE_BUCKET", "value": state_bucket},
+                                {"name": "SPP_ARTIFACT_URI", "value": artifact_uri},
+                                {"name": "SPP_PLANFILE_URI", "value": planfile_uri},
                                 {"name": "SPP_PLAN_URI", "value": plan_uri},
                                 {"name": "SPP_LOGS_URI", "value": logs_uri},
+                                {"name": "SPP_ALLOW_DESTROY", "value": "true" if allow_destroy else "false"},
+                                {"name": "SPP_RUNNER_DRY_RUN", "value": "false"},
+                                {"name": "GOOGLE_CLOUD_PROJECT", "value": project_id},
                                 {"name": "GOOGLE_CLOUD_LOCATION", "value": gcp_region},
-                                {"name": "GOOGLE_IMPERSONATE_SERVICE_ACCOUNT", "value": executor_identity},
+                                {"name": "SPP_EXECUTOR_IDENTITY", "value": executor_identity},
                             ],
                             "resources": {
                                 "requests": {"cpu": "500m", "memory": "1Gi"},
@@ -172,7 +184,7 @@ def evaluate_plan_with_conftest(
     policy_dir: str | Path | None = None,
     allow_destroy: bool = False,
 ) -> dict[str, Any]:
-    """Evaluate Terraform plan.json against the ssp-cp / module Rego policy bundle using conftest (or OPA fallback).
+    """Evaluate Terraform plan.json against modules/gcs-bucket/policies using the real `conftest` CLI binary (or `opa eval`).
 
     Also enforces INV-4 / ADR-AUT-002: any destroy > 0 or replace > 0 without an explicit human-approved delete request
     blocks the revision with blocked_reason = 'destroy_without_delete_request'.
@@ -196,8 +208,9 @@ def evaluate_plan_with_conftest(
     plan_payload = dict(plan_doc)
     plan_payload["allow_destroy"] = allow_destroy
 
-    # Run conftest binary if available on PATH
     conftest_bin = _find_binary("conftest")
+    opa_bin = _find_binary("opa")
+
     if conftest_bin and resolved_policy_dir.exists():
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
             json.dump(plan_payload, tmp)
@@ -226,15 +239,46 @@ def evaluate_plan_with_conftest(
                 os.remove(tmp_path)
             except OSError:
                 pass
+    elif opa_bin and resolved_policy_dir.exists():
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
+            json.dump(plan_payload, tmp)
+            tmp_path = tmp.name
+        try:
+            proc = subprocess.run(
+                [
+                    opa_bin,
+                    "eval",
+                    "-f",
+                    "json",
+                    "-d",
+                    str(resolved_policy_dir),
+                    "-i",
+                    tmp_path,
+                    "data.idp.gcp.gcs_bucket.deny",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if proc.returncode == 0:
+                out = json.loads(proc.stdout)
+                exprs = (out.get("result") or [{}])[0].get("expressions") or []
+                for msg in (exprs[0].get("value") if exprs else []) or []:
+                    if msg and msg not in violations:
+                        violations.append(msg)
+        finally:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
     else:
-        # Built-in structural fallback check if conftest binary is not installed
         for rc in plan_doc.get("resource_changes") or []:
             if rc.get("type") == "google_storage_bucket":
                 actions = (rc.get("change") or {}).get("actions") or []
                 if "delete" not in actions:
                     after = (rc.get("change") or {}).get("after") or {}
                     if str(after.get("location", "")).lower() != "us-east1":
-                        violations.append(f"GCS-LOC-001 (plan): location must be 'us-east1'")
+                        violations.append("GCS-LOC-001 (plan): location must be 'us-east1'")
                     if after.get("uniform_bucket_level_access") is not True:
                         violations.append("GCS-UBLA-001 (plan): uniform_bucket_level_access must be true")
                     if after.get("public_access_prevention") != "enforced":
@@ -259,22 +303,36 @@ def evaluate_plan_with_conftest(
 def _find_binary(name: str) -> str | None:
     import shutil
 
-    path_with_local = f"{Path.home() / '.local' / 'bin'}:{os.environ.get('PATH', '')}"
+    path_with_local = f"{Path.home() / '.local' / 'bin'}:/usr/local/bin:{os.environ.get('PATH', '')}"
     return shutil.which(name, path=path_with_local)
+
+
+def load_k8s_clients() -> tuple[Any, Any]:
+    """Load in-cluster or kubeconfig Kubernetes BatchV1Api and CoreV1Api clients."""
+    from kubernetes import client, config  # type: ignore[import-untyped]
+
+    try:
+        config.load_incluster_config()
+    except Exception:
+        config.load_kube_config()
+    return client.BatchV1Api(), client.CoreV1Api()
 
 
 async def launch_or_reattach_k8s_job(
     manifest: dict[str, Any],
     *,
-    k8s_batch_api: Any,
+    k8s_batch_api: Any | None = None,
     k8s_core_api: Any | None = None,
-    poll_seconds: float = 1.0,
+    poll_seconds: float = 2.0,
     heartbeat_fn: Any = None,
 ) -> dict[str, Any]:
     """Launch a Kubernetes Job in spp-platform or idempotently reattach on 409 AlreadyExists (INV-7, ADR-AUT-001).
 
-    Polls Job status until status.succeeded >= 1 or status.failed >= 1.
+    Polls Job status until status.succeeded >= 1 or status.failed >= 1 and parses SPP_TF_RESULT_JSON from logs if present.
     """
+    if k8s_batch_api is None:
+        k8s_batch_api, k8s_core_api = load_k8s_clients()
+
     job_name = manifest["metadata"]["name"]
     namespace = manifest["metadata"]["namespace"]
     reattached = False
@@ -326,10 +384,20 @@ async def launch_or_reattach_k8s_job(
         except Exception as exc:
             logs = f"Completed job {job_name}, log collection warning: {exc}"
 
+    runner_result: dict[str, Any] = {}
+    for line in reversed((logs or "").splitlines()):
+        if line.startswith("SPP_TF_RESULT_JSON="):
+            try:
+                runner_result = json.loads(line[len("SPP_TF_RESULT_JSON=") :])
+            except ValueError:
+                pass
+            break
+
     return {
         "k8s_job_name": job_name,
         "k8s_namespace": namespace,
         "reattached": reattached,
         "succeeded": succeeded,
         "logs": logs,
+        "runner_result": runner_result,
     }
