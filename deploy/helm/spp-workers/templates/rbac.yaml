@@ -1,4 +1,23 @@
-{{- if .Values.serviceAccounts.create }}
+{{- $createRoot := true -}}
+{{- if hasKey .Values "serviceAccounts" -}}
+  {{- if hasKey .Values.serviceAccounts "create" -}}
+    {{- $createRoot = .Values.serviceAccounts.create -}}
+  {{- end -}}
+{{- end -}}
+{{- if and (hasKey .Values "serviceAccount") (hasKey .Values.serviceAccount "create") -}}
+  {{- if not .Values.serviceAccount.create -}}
+    {{- $createRoot = false -}}
+  {{- end -}}
+{{- end -}}
+{{- $createWorker := $createRoot -}}
+{{- if and (hasKey .Values "serviceAccounts") (hasKey .Values.serviceAccounts "worker") (hasKey .Values.serviceAccounts.worker "create") -}}
+  {{- $createWorker = and $createRoot .Values.serviceAccounts.worker.create -}}
+{{- end -}}
+{{- $createRunner := $createRoot -}}
+{{- if and (hasKey .Values "serviceAccounts") (hasKey .Values.serviceAccounts "runner") (hasKey .Values.serviceAccounts.runner "create") -}}
+  {{- $createRunner = and $createRoot .Values.serviceAccounts.runner.create -}}
+{{- end -}}
+{{- if $createWorker }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -10,6 +29,8 @@ metadata:
     app.kubernetes.io/part-of: spp-platform
   annotations:
     iam.gke.io/gcp-service-account: {{ .Values.serviceAccounts.worker.gsaEmail | quote }}
+{{- end }}
+{{- if $createRunner }}
 ---
 apiVersion: v1
 kind: ServiceAccount

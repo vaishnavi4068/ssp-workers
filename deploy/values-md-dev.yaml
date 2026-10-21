@@ -1,0 +1,81 @@
+# Committed Helm values for GKE cluster md-dev (microdrive-dev, us-east1, namespace spp-platform).
+# Passed via `-f deploy/values-md-dev.yaml` in scripts/deploy.sh so re-running deploy.sh
+# never resets live settings (replicas, serviceAccount ownership, Temporal task queue, or runtime modes).
+
+global:
+  gcpProjectId: "microdrive-dev"
+  gkeClusterName: "md-dev"
+  gcpRegion: "us-east1"
+  namespace: "spp-platform"
+  workloadIdentityPool: "microdrive-dev.svc.id.goog"
+  nodeSelector:
+    workload: "spp"
+  tolerations:
+    - key: "dedicated"
+      operator: "Equal"
+      value: "spp"
+      effect: "NoSchedule"
+
+images:
+  registry: "us-east1-docker.pkg.dev/microdrive-dev/spp"
+  repo: "spp-workers"
+  runnerRepo: "spp-tf-runner"
+  tag: "v1.0.0"
+  runnerTag: ""
+  pullPolicy: "IfNotPresent"
+
+# The KSA (spp-tf-runner) is owned by the spp-cp release; do not recreate or conflict with it here.
+serviceAccounts:
+  create: false
+  worker:
+    create: false
+    name: "spp-workers"
+    gsaEmail: "spp-deploy@microdrive-dev.iam.gserviceaccount.com"
+  runner:
+    create: false
+    name: "spp-tf-runner"
+    gsaEmail: "spp-deploy@microdrive-dev.iam.gserviceaccount.com"
+
+serviceAccount:
+  create: false
+
+temporal:
+  address: "temporal-frontend.spp-temporal.svc.cluster.local:7233"
+  namespace: "platform"
+  taskQueue: "spp-gcs-provisioning"
+
+worker:
+  useK8s: true
+  useGcs: true
+  useDb: true
+
+modes:
+  useK8s: true
+  useGcs: true
+  useDb: true
+
+terraform:
+  stateBucket: "microdrive-dev-spp-tfstate"
+  defaultKmsKeyName: "projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek"
+  jobActiveDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 86400
+  templateEnabled: false
+
+alloydb:
+  host: "10.80.140.2"
+  port: 5432
+  database: "spp_platform"
+  username: "postgres"
+  gcpSecretManagerPasswordSecret: "spp-alloydb-postgres-password"
+  k8sSecretName: "spp-alloydb-credentials"
+  k8sSecretKey: "postgres-password"
+
+drift:
+  enabled: true
+  schedule: "0 */6 * * *"
+  projects:
+    - "microdrive-dev"
+
+replicas:
+  worker: 1
+replicaCount: 1

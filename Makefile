@@ -25,8 +25,9 @@ tf-validate:
 	conftest test --policy modules/gcs-bucket/policies modules/gcs-bucket/examples/requested.json modules/gcs-bucket/examples/approved.json
 
 lint-helm:
-	helm lint deploy/helm/spp-workers
-	helm template spp-workers deploy/helm/spp-workers --set terraform.templateEnabled=true >/dev/null
+	helm lint deploy/helm/spp-workers -f deploy/values-md-dev.yaml
+	helm template spp-workers deploy/helm/spp-workers -f deploy/values-md-dev.yaml --set terraform.templateEnabled=true >/dev/null
+	DRY_RUN=true ./scripts/deploy.sh >/dev/null
 
 deploy:
 	IMAGE_TAG=$(IMAGE_TAG) ./scripts/deploy.sh
