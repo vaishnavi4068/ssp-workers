@@ -52,9 +52,9 @@ variable "autoclass" {
 }
 
 variable "kms_key_name" {
-  description = "Cloud KMS CMEK CryptoKey resource ID in us-east1 (TODO from user: projects/microdrive-dev/locations/us-east1/keyRings/<TODO>/cryptoKeys/<TODO>)."
+  description = "Cloud KMS CMEK CryptoKey resource ID in us-east1 (90-day rotation)."
   type        = string
-  default     = "projects/microdrive-dev/locations/us-east1/keyRings/TODO-keyring/cryptoKeys/TODO-gcs-key"
+  default     = "projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek"
 }
 
 variable "default_kms_key_name" {
@@ -132,7 +132,7 @@ variable "gcs_buckets" {
     versioning                  = optional(bool, false)
     autoclass                   = optional(bool, false)
     default_kms_key_name        = optional(string, "")
-    kms_key_name                = optional(string, "projects/microdrive-dev/locations/us-east1/keyRings/TODO-keyring/cryptoKeys/TODO-gcs-key")
+    kms_key_name                = optional(string, "projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek")
     retention_policy = optional(object({
       retention_period = number
       is_locked        = optional(bool, false)

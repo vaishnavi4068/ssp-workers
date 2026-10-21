@@ -87,9 +87,9 @@ variable "autoclass" {
 }
 
 variable "kms_key_name" {
-  description = "Cloud KMS CMEK CryptoKey resource ID in us-east1 (alias for default_kms_key_name; TODO value from user: projects/microdrive-dev/locations/us-east1/keyRings/<TODO>/cryptoKeys/<TODO>)."
+  description = "Cloud KMS CMEK CryptoKey resource ID in us-east1 (90-day rotation; alias for default_kms_key_name)."
   type        = string
-  default     = "projects/microdrive-dev/locations/us-east1/keyRings/TODO-keyring/cryptoKeys/TODO-gcs-key"
+  default     = "projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek"
 }
 
 variable "default_kms_key_name" {

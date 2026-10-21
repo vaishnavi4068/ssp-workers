@@ -59,6 +59,24 @@ spec:
                   value: {{ $.Values.serviceAccounts.runner.name | quote }}
                 - name: SPP_RUNNER_GSA
                   value: {{ $.Values.serviceAccounts.runner.gsaEmail | quote }}
+                - name: SPP_DEFAULT_KMS_KEY_NAME
+                  value: {{ $.Values.terraform.defaultKmsKeyName | quote }}
+                - name: SPP_ALLOYDB_HOST
+                  value: {{ $.Values.alloydb.host | quote }}
+                - name: SPP_ALLOYDB_PORT
+                  value: {{ $.Values.alloydb.port | quote }}
+                - name: SPP_ALLOYDB_DB
+                  value: {{ $.Values.alloydb.database | quote }}
+                - name: SPP_ALLOYDB_USER
+                  value: {{ $.Values.alloydb.username | quote }}
+                - name: SPP_ALLOYDB_PASSWORD_SECRET
+                  value: {{ $.Values.alloydb.gcpSecretManagerPasswordSecret | quote }}
+                - name: SPP_ALLOYDB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $.Values.alloydb.k8sSecretName | quote }}
+                      key: {{ $.Values.alloydb.k8sSecretKey | quote }}
+                      optional: true
               resources:
                 requests:
                   cpu: "250m"

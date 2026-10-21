@@ -86,7 +86,7 @@ valid_approved := {
 		"retention_locked": false,
 		"uniform_bucket_level_access": true,
 		"public_access_prevention": "enforced",
-		"kms_key_name": "projects/microdrive-dev/locations/us-east1/keyRings/TODO-keyring/cryptoKeys/TODO-gcs-key",
+		"kms_key_name": "projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek",
 		"soft_delete_retention_days": 7,
 		"force_destroy": false,
 	},
@@ -110,7 +110,7 @@ valid_plan := {
 					"force_destroy": false,
 					"encryption": [
 						{
-							"default_kms_key_name": "projects/microdrive-dev/locations/us-east1/keyRings/TODO-keyring/cryptoKeys/TODO-gcs-key",
+							"default_kms_key_name": "projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek",
 						},
 					],
 					"labels": {

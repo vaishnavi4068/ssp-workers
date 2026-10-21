@@ -10,7 +10,7 @@ variables {
   public_access_prevention    = "enforced"
   versioning                  = false
   autoclass                   = false
-  default_kms_key_name        = "projects/microdrive-dev/locations/us-east1/keyRings/TODO-keyring/cryptoKeys/TODO-gcs-key"
+  default_kms_key_name        = "projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek"
 
   retention_policy = {
     retention_period = 7776000

@@ -12,6 +12,7 @@ STATE_BUCKET = "microdrive-dev-spp-tfstate"
 K8S_NAMESPACE = "spp-platform"
 RUNNER_KSA = "spp-tf-runner"
 RUNNER_GSA = "spp-deploy@microdrive-dev.iam.gserviceaccount.com"
+DEFAULT_KMS_KEY_NAME = "projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek"
 MAX_PROJECTION_BYTES = 2000
 
 MANDATORY_LABELS = (
@@ -206,7 +207,7 @@ def convert_approved_gcs_bucket_to_expected_entry(approved_doc: dict[str, Any]) 
     kms_key_name = (
         spec.get("default_kms_key_name")
         or spec.get("kms_key_name")
-        or "projects/microdrive-dev/locations/us-east1/keyRings/TODO-keyring/cryptoKeys/TODO-gcs-key"
+        or DEFAULT_KMS_KEY_NAME
     )
 
     entry: dict[str, Any] = {

@@ -131,7 +131,7 @@ def _sample_approved_gcs_doc(
             "retention_locked": False,
             "uniform_bucket_level_access": True,
             "public_access_prevention": "enforced",
-            "kms_key_name": "projects/microdrive-dev/locations/us-east1/keyRings/TODO-keyring/cryptoKeys/TODO-gcs-key",
+            "kms_key_name": "projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek",
             "soft_delete_retention_days": 7,
             "force_destroy": False,
         },
@@ -828,3 +828,13 @@ def test_helm_values_and_rbac_configure_spp_deploy_workload_identity():
         values["serviceAccounts"]["worker"]["gsaEmail"]
         == "spp-deploy@microdrive-dev.iam.gserviceaccount.com"
     )
+    assert (
+        values["terraform"]["defaultKmsKeyName"]
+        == "projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek"
+    )
+    assert values["alloydb"]["host"] == "10.80.140.2"
+    assert values["alloydb"]["port"] == 5432
+    assert values["alloydb"]["database"] == "spp_platform"
+    assert values["alloydb"]["username"] == "postgres"
+    assert values["alloydb"]["gcpSecretManagerPasswordSecret"] == "spp-alloydb-postgres-password"
+

@@ -37,6 +37,13 @@ spec:
           port: 8181
         - protocol: TCP
           port: 5432
+    # AlloyDB for PostgreSQL private IP (10.80.140.2:5432, db spp_platform)
+    - to:
+        - ipBlock:
+            cidr: "{{ .Values.alloydb.host }}/32"
+      ports:
+        - protocol: TCP
+          port: {{ .Values.alloydb.port }}
     # GKE metadata server for Workload Identity tokens (169.254.169.254:80 and Dataplane V2 169.254.169.252:988)
     - to:
         - ipBlock:

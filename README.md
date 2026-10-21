@@ -16,7 +16,7 @@ Implements backlog items **WI-002** (Temporal workers & K8s Job runner), **WI-00
    - **Decommission:** Refuses non-empty buckets (`bucket_not_empty`) and never force-deletes (`force_destroy = false`, `GCS-DEL-001`).
 
 2. **Terraform GCS Bucket Module (`modules/gcs-bucket/`, WI-004):**
-   - Enforces `location = "us-east1"` only (`ADR-SVC-001 GR-1`), CMEK encryption (`kms_key_name` / `default_kms_key_name` in `locations/us-east1`, default `projects/microdrive-dev/locations/us-east1/keyRings/TODO-keyring/cryptoKeys/TODO-gcs-key`), `uniform_bucket_level_access = true`, `public_access_prevention = "enforced"`, `versioning`, optional `lifecycle_rules` defaulting to `[]`, optional `retention_policy` (`is_locked = false` by default, `GCS-RET-003`), `force_destroy = false` (`GCS-DEL-001`), and the **8 mandatory labels** (`sppappid` matching `^apm[0-9]{5}$` [lowercase `apm` + 5 digits, from `APM` + 5 digits], `costcenter`, `environmenttype` in `nonprod|prod`, `primarylob`, `datasensitivity`, `owner`, `provisionedby`, `idp_resource_id`; forbidding `environmentsubtype`).
+   - Enforces `location = "us-east1"` only (`ADR-SVC-001 GR-1`), CMEK encryption (`kms_key_name` / `default_kms_key_name` in `locations/us-east1`, default `projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek` with 90-day rotation), `uniform_bucket_level_access = true`, `public_access_prevention = "enforced"`, `versioning`, optional `lifecycle_rules` defaulting to `[]`, optional `retention_policy` (`is_locked = false` by default, `GCS-RET-003`), `force_destroy = false` (`GCS-DEL-001`), and the **8 mandatory labels** (`sppappid` matching `^apm[0-9]{5}$` [lowercase `apm` + 5 digits, from `APM` + 5 digits], `costcenter`, `environmenttype` in `nonprod|prod`, `primarylob`, `datasensitivity`, `owner`, `provisionedby`, `idp_resource_id`; forbidding `environmentsubtype`).
    - GCS backend configured for `gs://microdrive-dev-spp-tfstate`.
 
 3. **Independent Drift Detection Job (`workers/drift.py`, `drift-<project_id>`, WI-005):**
@@ -25,6 +25,7 @@ Implements backlog items **WI-002** (Temporal workers & K8s Job runner), **WI-00
 4. **Deployment (`Dockerfile`, `cloudbuild.yaml`, `deploy/helm/spp-workers/`):**
    - Cloud Build publishes `us-east1-docker.pkg.dev/microdrive-dev/spp/spp-workers:<sha>`.
    - Helm chart targets namespace `spp-platform` on GKE `md-dev` (`nodeSelector: workload=spp`, toleration `dedicated=spp:NoSchedule`) with Kubernetes ServiceAccount `spp-tf-runner` annotated with `iam.gke.io/gcp-service-account: spp-deploy@microdrive-dev.iam.gserviceaccount.com` (Workload Identity, no keys).
+   - Connects to live AlloyDB (`10.80.140.2:5432`, database `spp_platform`, user `postgres`) with password synced at deploy time from Secret Manager secret `spp-alloydb-postgres-password` into K8s Secret `spp-alloydb-credentials` (zero secrets committed in repo).
 
 ---
 
@@ -45,10 +46,10 @@ Implements backlog items **WI-002** (Temporal workers & K8s Job runner), **WI-00
      --member="serviceAccount:microdrive-dev.svc.id.goog[spp-platform/spp-workers]"
    ```
 2. **State Bucket & Per-Project Executor Impersonation:**
-   - Ensure `gs://microdrive-dev-spp-tfstate` exists in `us-east1` with object versioning and CMEK enabled, and grant `spp-deploy@microdrive-dev.iam.gserviceaccount.com` `roles/storage.objectAdmin` on `gs://microdrive-dev-spp-tfstate`.
+   - Ensure `gs://microdrive-dev-spp-tfstate` exists in `us-east1` with object versioning and CMEK (`projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek`) enabled, and grant `spp-deploy@microdrive-dev.iam.gserviceaccount.com` `roles/storage.objectAdmin` on `gs://microdrive-dev-spp-tfstate`.
    - Grant `spp-deploy@microdrive-dev.iam.gserviceaccount.com` `roles/iam.serviceAccountTokenCreator` on target project executor service accounts (`idp-tf@<project_id>.iam.gserviceaccount.com`).
-3. **Cloud KMS CMEK Key URI (`BLK-002` — `TODO` from User):**
-   - Supply the real Cloud KMS key URI in `us-east1` (`projects/microdrive-dev/locations/us-east1/keyRings/<TODO>/cryptoKeys/<TODO>`) and grant the Cloud Storage service agent (`service-<project_number>@gs-project-accounts.iam.gserviceaccount.com`) `roles/cloudkms.cryptoKeyEncrypterDecrypter`.
-4. **Temporal Namespace & AlloyDB (`spp_platform`):**
+3. **Cloud KMS CMEK Key (`projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek`):**
+   - Configured with 90-day rotation in `us-east1`; GCS service agent and `spp-deploy@microdrive-dev.iam.gserviceaccount.com` already have `roles/cloudkms.cryptoKeyEncrypterDecrypter`.
+4. **Temporal Namespace & Live AlloyDB (`spp_platform` at `10.80.140.2:5432`):**
    - Register Temporal namespace `platform` on `temporal-frontend.spp-temporal.svc.cluster.local:7233`.
-   - Ensure AlloyDB database `spp_platform` (`idp` schema from `WI-001`) is reachable from `spp-platform`.
+   - Live AlloyDB (`10.80.140.2:5432`, db `spp_platform`, user `postgres`) reads its password from GCP Secret Manager secret `spp-alloydb-postgres-password` (synced to K8s Secret `spp-alloydb-credentials` by `scripts/deploy.sh`).

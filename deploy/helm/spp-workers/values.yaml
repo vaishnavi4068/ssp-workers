@@ -34,6 +34,7 @@ temporal:
 
 terraform:
   stateBucket: "microdrive-dev-spp-tfstate"
+  defaultKmsKeyName: "projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek"
   jobActiveDeadlineSeconds: 1800
   ttlSecondsAfterFinished: 86400
   templateEnabled: false
@@ -46,6 +47,15 @@ terraform:
     revisionNo: 1
     projectId: "microdrive-dev"
     executorIdentity: "spp-deploy@microdrive-dev.iam.gserviceaccount.com"
+
+alloydb:
+  host: "10.80.140.2"
+  port: 5432
+  database: "spp_platform"
+  username: "postgres"
+  gcpSecretManagerPasswordSecret: "spp-alloydb-postgres-password"
+  k8sSecretName: "spp-alloydb-credentials"
+  k8sSecretKey: "postgres-password"
 
 drift:
   enabled: true
