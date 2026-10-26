@@ -21,18 +21,33 @@ images:
   pullPolicy: "IfNotPresent"
 
 serviceAccounts:
-  create: true
+  create: false
   worker:
+    create: false
     name: "spp-workers"
     gsaEmail: "spp-deploy@microdrive-dev.iam.gserviceaccount.com"
   runner:
+    create: false
     name: "spp-tf-runner"
     gsaEmail: "spp-deploy@microdrive-dev.iam.gserviceaccount.com"
+
+serviceAccount:
+  create: false
 
 temporal:
   address: "temporal-frontend.spp-temporal.svc.cluster.local:7233"
   namespace: "platform"
   taskQueue: "spp-gcs-provisioning"
+
+worker:
+  useK8s: true
+  useGcs: true
+  useDb: true
+
+modes:
+  useK8s: true
+  useGcs: true
+  useDb: true
 
 terraform:
   stateBucket: "microdrive-dev-spp-tfstate"
@@ -66,4 +81,5 @@ drift:
     - "microdrive-dev"
 
 replicas:
-  worker: 2
+  worker: 1
+replicaCount: 1

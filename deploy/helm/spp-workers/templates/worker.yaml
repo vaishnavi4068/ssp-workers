@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: spp-workers
     app.kubernetes.io/part-of: spp-platform
 spec:
-  replicas: {{ .Values.replicas.worker }}
+  replicas: {{ if and (hasKey .Values "replicas") (hasKey .Values.replicas "worker") }}{{ .Values.replicas.worker }}{{ else if hasKey .Values "replicaCount" }}{{ .Values.replicaCount }}{{ else }}1{{ end }}
   selector:
     matchLabels:
       app.kubernetes.io/name: spp-workers
@@ -77,12 +77,30 @@ spec:
               value: {{ .Values.global.gcpProjectId | quote }}
             - name: GOOGLE_CLOUD_LOCATION
               value: {{ .Values.global.gcpRegion | quote }}
+            {{- $useK8s := true -}}
+            {{- if and (hasKey .Values "worker") (hasKey .Values.worker "useK8s") -}}
+              {{- $useK8s = .Values.worker.useK8s -}}
+            {{- else if and (hasKey .Values "modes") (hasKey .Values.modes "useK8s") -}}
+              {{- $useK8s = .Values.modes.useK8s -}}
+            {{- end -}}
+            {{- $useGcs := true -}}
+            {{- if and (hasKey .Values "worker") (hasKey .Values.worker "useGcs") -}}
+              {{- $useGcs = .Values.worker.useGcs -}}
+            {{- else if and (hasKey .Values "modes") (hasKey .Values.modes "useGcs") -}}
+              {{- $useGcs = .Values.modes.useGcs -}}
+            {{- end -}}
+            {{- $useDb := true -}}
+            {{- if and (hasKey .Values "worker") (hasKey .Values.worker "useDb") -}}
+              {{- $useDb = .Values.worker.useDb -}}
+            {{- else if and (hasKey .Values "modes") (hasKey .Values.modes "useDb") -}}
+              {{- $useDb = .Values.modes.useDb -}}
+            {{- end }}
             - name: SPP_WORKER_USE_K8S
-              value: "true"
+              value: {{ $useK8s | toString | quote }}
             - name: SPP_WORKER_USE_GCS
-              value: "true"
+              value: {{ $useGcs | toString | quote }}
             - name: SPP_WORKER_USE_DB
-              value: "true"
+              value: {{ $useDb | toString | quote }}
           resources:
             requests:
               cpu: "250m"

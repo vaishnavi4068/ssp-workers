@@ -83,10 +83,22 @@ spec:
                       name: {{ $.Values.alloydb.k8sSecretName | quote }}
                       key: {{ $.Values.alloydb.k8sSecretKey | quote }}
                       optional: true
+                {{- $useGcs := true -}}
+                {{- if and (hasKey $.Values "worker") (hasKey $.Values.worker "useGcs") -}}
+                  {{- $useGcs = $.Values.worker.useGcs -}}
+                {{- else if and (hasKey $.Values "modes") (hasKey $.Values.modes "useGcs") -}}
+                  {{- $useGcs = $.Values.modes.useGcs -}}
+                {{- end -}}
+                {{- $useDb := true -}}
+                {{- if and (hasKey $.Values "worker") (hasKey $.Values.worker "useDb") -}}
+                  {{- $useDb = $.Values.worker.useDb -}}
+                {{- else if and (hasKey $.Values "modes") (hasKey $.Values.modes "useDb") -}}
+                  {{- $useDb = $.Values.modes.useDb -}}
+                {{- end }}
                 - name: SPP_WORKER_USE_GCS
-                  value: "true"
+                  value: {{ $useGcs | toString | quote }}
                 - name: SPP_WORKER_USE_DB
-                  value: "true"
+                  value: {{ $useDb | toString | quote }}
               resources:
                 requests:
                   cpu: "250m"

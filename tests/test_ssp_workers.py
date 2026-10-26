@@ -819,6 +819,8 @@ def test_helm_values_and_rbac_configure_spp_deploy_workload_identity():
     assert values["global"]["namespace"] == "spp-platform"
     assert values["global"]["gcpRegion"] == "us-east1"
     assert values["global"]["nodeSelector"] == {"workload": "spp"}
+    assert values["serviceAccounts"]["create"] is False
+    assert values["serviceAccount"]["create"] is False
     assert values["serviceAccounts"]["runner"]["name"] == "spp-tf-runner"
     assert (
         values["serviceAccounts"]["runner"]["gsaEmail"]
@@ -837,9 +839,81 @@ def test_helm_values_and_rbac_configure_spp_deploy_workload_identity():
     assert values["alloydb"]["database"] == "spp_platform"
     assert values["alloydb"]["username"] == "postgres"
     assert values["alloydb"]["gcpSecretManagerPasswordSecret"] == "spp-alloydb-postgres-password"
+    assert values["temporal"]["namespace"] == "platform"
     assert values["temporal"]["taskQueue"] == "spp-gcs-provisioning"
+    assert values["images"]["registry"] == "us-east1-docker.pkg.dev/microdrive-dev/spp"
     assert values["images"]["runnerRepo"] == "spp-tf-runner"
     assert values["images"]["tag"] != "latest"
+    assert values["replicas"]["worker"] == 1
+    assert values["worker"]["useK8s"] is True
+    assert values["worker"]["useGcs"] is True
+    assert values["worker"]["useDb"] is True
+
+
+def test_md_dev_values_and_deploy_script_template_render():
+    import shutil
+    import subprocess
+
+    md_dev_path = REPO_ROOT / "deploy" / "values-md-dev.yaml"
+    assert md_dev_path.is_file()
+    md_dev = yaml.safe_load(md_dev_path.read_text(encoding="utf-8"))
+
+    assert md_dev["replicas"]["worker"] == 1
+    assert md_dev["replicaCount"] == 1
+    assert md_dev["serviceAccounts"]["create"] is False
+    assert md_dev["serviceAccount"]["create"] is False
+    assert md_dev["temporal"]["namespace"] == "platform"
+    assert md_dev["temporal"]["taskQueue"] == "spp-gcs-provisioning"
+    assert md_dev["images"]["registry"] == "us-east1-docker.pkg.dev/microdrive-dev/spp"
+    assert md_dev["worker"]["useK8s"] is True
+    assert md_dev["worker"]["useGcs"] is True
+    assert md_dev["worker"]["useDb"] is True
+
+    deploy_sh = (REPO_ROOT / "scripts" / "deploy.sh").read_text(encoding="utf-8")
+    assert "--reset-then-reuse-values" in deploy_sh
+    assert "values-md-dev.yaml" in deploy_sh
+    assert "images.tag=" in deploy_sh
+    assert "images.runnerTag=" in deploy_sh
+    assert "set +x" in deploy_sh
+
+    if shutil.which("helm"):
+        proc = subprocess.run(
+            [str(REPO_ROOT / "scripts" / "deploy.sh"), "--dry-run"],
+            cwd=str(REPO_ROOT),
+            env={
+                **dict(__import__("os").environ),
+                "IMAGE_TAG": "sha-worker-123",
+                "RUNNER_IMAGE_TAG": "sha-runner-456",
+            },
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        # Skip the [dry-run] header and helm lint output before the first `---`
+        yaml_stream = "---" + proc.stdout.split("---", 1)[1]
+        docs = [d for d in yaml.safe_load_all(yaml_stream) if d]
+
+        kinds = [d["kind"] for d in docs]
+        assert "ServiceAccount" not in kinds
+
+        deployments = [d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "spp-workers"]
+        assert len(deployments) == 1
+        dep = deployments[0]
+        assert dep["spec"]["replicas"] == 1
+
+        container = dep["spec"]["template"]["spec"]["containers"][0]
+        assert container["image"] == "us-east1-docker.pkg.dev/microdrive-dev/spp/spp-workers:sha-worker-123"
+        env_map = {e["name"]: e.get("value") for e in container["env"]}
+        assert env_map["TEMPORAL_NAMESPACE"] == "platform"
+        assert env_map["TEMPORAL_TASK_QUEUE"] == "spp-gcs-provisioning"
+        assert env_map["SPP_RUNNER_IMAGE_TAG"] == "sha-runner-456"
+        assert (
+            env_map["SPP_RUNNER_IMAGE"]
+            == "us-east1-docker.pkg.dev/microdrive-dev/spp/spp-tf-runner:sha-runner-456"
+        )
+        assert env_map["SPP_WORKER_USE_K8S"] == "true"
+        assert env_map["SPP_WORKER_USE_GCS"] == "true"
+        assert env_map["SPP_WORKER_USE_DB"] == "true"
 
 
 def test_worker_config_defaults_and_runner_image_tag_resolution(monkeypatch: pytest.MonkeyPatch):
