@@ -24,6 +24,9 @@ from .models import (
     RUNNER_GSA,
     RUNNER_KSA,
     build_gcs_bucket_observed_projection,
+    build_spanner_database_observed_projection,
+    build_spanner_instance_observed_projection,
+    tfvars_collection_key,
     build_logs_uri,
     build_operation_id,
     build_plan_uri,
@@ -336,7 +339,7 @@ async def run_tf_plan_job_activity(params: dict[str, Any]) -> dict[str, Any]:
 
     store.record_policy_evaluation_plan(
         revision_id=revision_id,
-        opa_package="idp.gcp.gcs_bucket",
+        opa_package="main",
         bundle_revision=os.getenv("OPA_BUNDLE_REVISION", "3f9a1c2"),
         input_sha256=canonical_sha256(plan_doc),
         decision=conftest_res["decision"],
@@ -585,6 +588,8 @@ async def run_tf_apply_job_activity(params: dict[str, Any]) -> dict[str, Any]:
 
     tfvars = store.get_gcs_json(rev["artifact_uri"])
     gcs_buckets_map = tfvars.get("gcs_buckets") or {}
+    spanner_instances_map = tfvars.get("spanner_instances") or {}
+    spanner_databases_map = tfvars.get("spanner_databases") or {}
     observed_updates: list[dict[str, Any]] = []
 
     for m in rev["manifest"].get("members") or []:
@@ -639,6 +644,64 @@ async def run_tf_apply_job_activity(params: dict[str, Any]) -> dict[str, Any]:
                     "resource_observed": ro_row,
                 }
             )
+            continue
+
+        if res_kind == "spanner_instance" and res_name in spanner_instances_map:
+            entry = copy.deepcopy(spanner_instances_map[res_name])
+            projection, proj_sha = build_spanner_instance_observed_projection(entry, tf_address=res_tf_addr)
+            cloud_id = f"projects/{entry['project']}/instances/{res_name}"
+            was_written, ro_row = store.upsert_resource_observed(
+                resource_id=res_id,
+                observation_id=obs_row["observation_id"],
+                exists_in_cloud=True,
+                cloud_resource_id=cloud_id,
+                projection=projection,
+                projection_sha256=proj_sha,
+            )
+            store.update_resource_after_apply(res_id, lifecycle="active", gate="OBSERVED", sync_status="IN_SYNC")
+            observed_updates.append(
+                {
+                    "resource_id": res_id,
+                    "cloud_resource_id": cloud_id,
+                    "projection_sha256": proj_sha,
+                    "was_written": was_written,
+                    "projection": projection,
+                    "resource_observed": ro_row,
+                }
+            )
+            continue
+
+        if res_kind == "spanner_database":
+            map_key = None
+            for key in spanner_databases_map:
+                if key.endswith(f"/{res_name}"):
+                    map_key = key
+                    break
+            if map_key:
+                entry = copy.deepcopy(spanner_databases_map[map_key])
+                projection, proj_sha = build_spanner_database_observed_projection(entry, tf_address=res_tf_addr)
+                cloud_id = (
+                    f"projects/{entry['project']}/instances/{entry['instance']}/databases/{res_name}"
+                )
+                was_written, ro_row = store.upsert_resource_observed(
+                    resource_id=res_id,
+                    observation_id=obs_row["observation_id"],
+                    exists_in_cloud=True,
+                    cloud_resource_id=cloud_id,
+                    projection=projection,
+                    projection_sha256=proj_sha,
+                )
+                store.update_resource_after_apply(res_id, lifecycle="active", gate="OBSERVED", sync_status="IN_SYNC")
+                observed_updates.append(
+                    {
+                        "resource_id": res_id,
+                        "cloud_resource_id": cloud_id,
+                        "projection_sha256": proj_sha,
+                        "was_written": was_written,
+                        "projection": projection,
+                        "resource_observed": ro_row,
+                    }
+                )
 
     store.append_gate_event(
         state_unit_id=state_unit_id,
@@ -711,6 +774,8 @@ def _build_synthetic_plan_json(
     """Construct a Terraform plan.json matching terraform show -json structure from Expected tfvars (offline unit test helper)."""
     resource_changes: list[dict[str, Any]] = []
     gcs_buckets = tfvars.get("gcs_buckets") or {}
+    spanner_instances = tfvars.get("spanner_instances") or {}
+    spanner_databases = tfvars.get("spanner_databases") or {}
 
     for m in manifest_members:
         name = m["name"]
@@ -774,6 +839,45 @@ def _build_synthetic_plan_json(
                                 },
                             }
                         )
+
+        elif m["kind"] == "spanner_instance" and name in spanner_instances:
+            entry = spanner_instances[name]
+            actions = ["create"] if change == "added" else (["update"] if change == "modified" else ["no-op"])
+            resource_changes.append(
+                {
+                    "address": f'module.spanner_instance["{name}"].google_spanner_instance.this',
+                    "type": "google_spanner_instance",
+                    "change": {
+                        "actions": actions,
+                        "after": {
+                            "project": entry["project"],
+                            "name": entry["name"],
+                            "config": entry.get("config"),
+                            "labels": entry.get("labels") or {},
+                        },
+                    },
+                }
+            )
+        elif m["kind"] == "spanner_database":
+            map_key = next((k for k in spanner_databases if k.endswith(f"/{name}")), None)
+            if map_key and map_key in spanner_databases:
+                entry = spanner_databases[map_key]
+                actions = ["create"] if change == "added" else (["update"] if change == "modified" else ["no-op"])
+                resource_changes.append(
+                    {
+                        "address": f'module.spanner_database["{map_key}"].google_spanner_database.this',
+                        "type": "google_spanner_database",
+                        "change": {
+                            "actions": actions,
+                            "after": {
+                                "project": entry["project"],
+                                "instance": entry["instance"],
+                                "name": entry["name"],
+                                "deletion_protection": entry.get("deletion_protection", True),
+                            },
+                        },
+                    }
+                )
 
     return {
         "format_version": "1.2",

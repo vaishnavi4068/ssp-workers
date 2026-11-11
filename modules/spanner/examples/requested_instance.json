@@ -1,0 +1,32 @@
+{
+  "api_version": "idp.spp/v1",
+  "kind": "spanner_instance",
+  "action": "create",
+  "metadata": {
+    "apm_id": "apm0017299",
+    "project_id": "spp-nonprod-orders-svc",
+    "environment": "nonprod",
+    "lob": "spp",
+    "data_sensitivity": "restricted",
+    "data_classification": "proprietary",
+    "owner": "data.owner@example.com",
+    "shared_mailbox": "orders-team@example.com",
+    "requested_by": "requester@example.com",
+    "cost_center": "000000",
+    "tenancy": "dedicated",
+    "labels": { "app": "orders" }
+  },
+  "spec": {
+    "name": "spp-nonprod-orders",
+    "display_name": "SPP Orders (nonprod)",
+    "location": "us-east1",
+    "config": "regional-us-east1",
+    "compute": { "processing_units": 100 },
+    "access": [
+      {
+        "role": "roles/spanner.viewer",
+        "members": ["group:gcp-spp-nonprod-orders-dba@example.com"]
+      }
+    ]
+  }
+}

@@ -201,7 +201,7 @@ def evaluate_plan_with_conftest(
         policy_dir
         or os.getenv(
             "SPP_POLICY_DIR",
-            str(Path(__file__).resolve().parent.parent / "modules" / "gcs-bucket" / "policies"),
+            str(Path(__file__).resolve().parent.parent / "modules" / "project-root" / "policies"),
         )
     )
 
@@ -254,7 +254,7 @@ def evaluate_plan_with_conftest(
                     str(resolved_policy_dir),
                     "-i",
                     tmp_path,
-                    "data.idp.gcp.gcs_bucket.deny",
+                    "data.main.deny",
                 ],
                 capture_output=True,
                 text=True,

@@ -744,6 +744,119 @@ def test_drift_detection_gcs_pap_inherited_critical_alert_only():
     assert finding["status"] == "OPEN"
 
 
+def _sample_spanner_instance_doc() -> dict:
+    return {
+        "api_version": "idp.spp/v1",
+        "kind": "spanner_instance",
+        "action": "create",
+        "metadata": {
+            "apm_id": "apm00172",
+            "project_id": "spp-nonprod-orders-svc",
+            "environment": "nonprod",
+            "lob": "spp",
+            "tenancy": "dedicated",
+            "labels": {
+                "app": "orders",
+                "costcenter": "000000",
+                "dataclassification": "proprietary",
+                "datasensitivity": "restricted",
+                "environmenttype": "nonprod",
+                "idp_resource_id": "3936dbd5-d13d-5d84-ad7a-a1e3a595f213",
+                "owner": "data_owner_example_com",
+                "primarylob": "spp",
+                "provisionedby": "idp",
+                "sppappid": "apm00172",
+            },
+        },
+        "spec": {
+            "name": "spp-nonprod-orders",
+            "display_name": "SPP Orders (nonprod)",
+            "config": "regional-us-east1",
+            "edition": "STANDARD",
+            "compute": {"processing_units": 100},
+            "access": [{"role": "roles/spanner.viewer", "members": ["group:gcp-spp-nonprod-orders-dba@example.com"]}],
+            "force_destroy": False,
+        },
+    }
+
+
+def _sample_spanner_database_doc() -> dict:
+    return {
+        "api_version": "idp.spp/v1",
+        "kind": "spanner_database",
+        "action": "create",
+        "metadata": {
+            "apm_id": "apm00172",
+            "project_id": "spp-nonprod-orders-svc",
+            "environment": "nonprod",
+        },
+        "spec": {
+            "instance": "spp-nonprod-orders",
+            "name": "orders",
+            "database_dialect": "GOOGLE_STANDARD_SQL",
+            "version_retention_period": "1h",
+            "encryption_config": {
+                "kms_key_names": [
+                    "projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-spanner-cmek"
+                ]
+            },
+            "deletion_protection": True,
+            "enable_drop_protection": True,
+            "ddl": [
+                "CREATE TABLE orders (order_id STRING(36) NOT NULL, created_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)) PRIMARY KEY (order_id)"
+            ],
+            "access": [
+                {
+                    "role": "roles/spanner.databaseReader",
+                    "members": ["group:gcp-spp-nonprod-orders-read@example.com"],
+                }
+            ],
+        },
+    }
+
+
+def test_compose_expected_revision_gcs_unchanged_spanner_added():
+    """WI-007 AC-3: rev-2 adds spanner while gcs member stays unchanged (specs/examples/spanner.gates.json)."""
+    gcs_doc = _sample_approved_gcs_doc()
+    DEFAULT_STORE.register_approved_resource(
+        approved_doc=gcs_doc,
+        state_unit_id="af42f828-3378-5ee2-8e9b-2378d2314f97",
+        resource_id="9478bcfc-c2cf-583b-8bd8-096476647840",
+        approval_id="761d8bf8-d23e-5da3-8e52-02e6eb6c2afb",
+    )
+    DEFAULT_STORE.compose_and_render_expected_revision(
+        state_unit_id="af42f828-3378-5ee2-8e9b-2378d2314f97",
+        trigger_approval_id="761d8bf8-d23e-5da3-8e52-02e6eb6c2afb",
+    )
+
+    inst = _sample_spanner_instance_doc()
+    dbdoc = _sample_spanner_database_doc()
+    inst_reg = DEFAULT_STORE.register_approved_resource(
+        approved_doc=inst,
+        resource_id="3936dbd5-d13d-5d84-ad7a-a1e3a595f213",
+        approval_id="apr-spanner-inst",
+    )
+    db_reg = DEFAULT_STORE.register_approved_resource(
+        approved_doc=dbdoc,
+        resource_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        approval_id="apr-spanner-db",
+        parent_resource_id=inst_reg["resource"]["resource_id"],
+    )
+    assert db_reg["resource"]["parent_resource_id"] == inst_reg["resource"]["resource_id"]
+
+    rev2 = DEFAULT_STORE.compose_and_render_expected_revision(
+        state_unit_id="af42f828-3378-5ee2-8e9b-2378d2314f97",
+        trigger_approval_id="apr-spanner-db",
+    )
+    tfvars = DEFAULT_STORE.get_gcs_json(rev2["artifact_uri"])
+    assert "gcs_buckets" in tfvars and "spanner_instances" in tfvars and "spanner_databases" in tfvars
+    assert tfvars["spanner_databases"]["spp-nonprod-orders/orders"]["name"] == "orders"
+    members = {m["resource_id"]: m["change"] for m in rev2["manifest"]["members"]}
+    assert members["9478bcfc-c2cf-583b-8bd8-096476647840"] == "unchanged"
+    assert members["3936dbd5-d13d-5d84-ad7a-a1e3a595f213"] == "added"
+    assert members["a1b2c3d4-e5f6-7890-abcd-ef1234567890"] == "added"
+
+
 def test_drift_comparer_spanner_and_ignore_paths():
     # Non-autoscaled Spanner instance processing_units changed 100 -> 300 => medium severity
     diffs = compare_expected_vs_observed(

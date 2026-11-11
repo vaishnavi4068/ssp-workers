@@ -79,7 +79,7 @@ def run_terraform_job() -> int:
     plan_uri = os.getenv("SPP_PLAN_URI", "")
     logs_uri = os.getenv("SPP_LOGS_URI", "")
     allow_destroy = os.getenv("SPP_ALLOW_DESTROY", "false").lower() == "true" or (phase == "destroy_plan")
-    tf_source_dir = Path(os.getenv("SPP_TF_MODULE_DIR", "/app/modules/gcs-bucket"))
+    tf_source_dir = Path(os.getenv("SPP_TF_MODULE_DIR", "/app/modules/project-root"))
     policy_dir = Path(os.getenv("SPP_POLICY_DIR", str(tf_source_dir / "policies")))
     dry_run = os.getenv("SPP_RUNNER_DRY_RUN", "false").lower() == "true"
 

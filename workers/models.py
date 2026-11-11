@@ -13,6 +13,9 @@ K8S_NAMESPACE = "spp-platform"
 RUNNER_KSA = "spp-tf-runner"
 RUNNER_GSA = "spp-deploy@microdrive-dev.iam.gserviceaccount.com"
 DEFAULT_KMS_KEY_NAME = "projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek"
+DEFAULT_SPANNER_KMS_KEY_NAME = (
+    "projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-spanner-cmek"
+)
 MAX_PROJECTION_BYTES = 2000
 
 MANDATORY_LABELS = (
@@ -119,6 +122,163 @@ def render_tf_address(tf_address_template: str, *, name: str, instance: str | No
     if instance is not None:
         addr = addr.replace("{instance}", instance)
     return addr
+
+
+def tfvars_collection_key(kind: str, *, name: str, spec: dict[str, Any]) -> str:
+    """Map key within a tfvars collection (spanner_databases use '{instance}/{name}')."""
+    if kind == "spanner_database":
+        instance = spec.get("instance") or spec.get("parent_instance")
+        if not instance:
+            raise ValueError("spanner_database approved spec must include spec.instance")
+        return f"{instance}/{name}"
+    return name
+
+
+def _iam_bindings_from_spec(spec: dict[str, Any]) -> dict[str, list[str]]:
+    if "iam_bindings" in spec and isinstance(spec["iam_bindings"], dict):
+        return {role: list(members) for role, members in spec["iam_bindings"].items()}
+    bindings: dict[str, list[str]] = {}
+    for binding in spec.get("access") or []:
+        role = binding["role"]
+        members = list(binding.get("members") or [])
+        if role in bindings:
+            for m in members:
+                if m not in bindings[role]:
+                    bindings[role].append(m)
+        else:
+            bindings[role] = members
+    return bindings
+
+
+def convert_approved_spanner_instance_to_expected_entry(approved_doc: dict[str, Any]) -> dict[str, Any]:
+    """Convert Approved spanner_instance to Expected tfvars (ADR-SVC-002, specs/examples/spanner.gates.json)."""
+    metadata = approved_doc.get("metadata") or {}
+    spec = approved_doc.get("spec") or {}
+    project = metadata.get("project_id") or spec.get("project")
+    config = spec.get("config") or "regional-us-east1"
+    if config != "regional-us-east1":
+        raise ValueError("SPN-CFG-001: config must be regional-us-east1")
+
+    compute = spec.get("compute") or {}
+    processing_units = int(compute.get("processing_units", spec.get("processing_units", 100)))
+    force_destroy = bool(spec.get("force_destroy", False))
+    if force_destroy:
+        raise ValueError("SPN-DEL-001: force_destroy must be false")
+
+    labels = dict(metadata.get("labels") or spec.get("labels") or {})
+    if "environmentsubtype" in labels:
+        raise ValueError("LBL-001: environmentsubtype forbidden")
+
+    entry: dict[str, Any] = {
+        "project": project,
+        "name": spec["name"],
+        "display_name": spec.get("display_name") or spec["name"],
+        "config": config,
+        "edition": spec.get("edition", "STANDARD"),
+        "instance_type": spec.get("instance_type", "PROVISIONED"),
+        "processing_units": processing_units,
+        "num_nodes": spec.get("num_nodes"),
+        "autoscaling_config": spec.get("autoscaling_config"),
+        "default_backup_schedule_type": spec.get("default_backup_schedule_type", "AUTOMATIC"),
+        "labels": labels,
+        "iam_bindings": _iam_bindings_from_spec(spec),
+        "force_destroy": False,
+        "tenancy": metadata.get("tenancy", "dedicated"),
+    }
+    return entry
+
+
+def convert_approved_spanner_database_to_expected_entry(approved_doc: dict[str, Any]) -> dict[str, Any]:
+    """Convert Approved spanner_database to Expected tfvars (no labels — Quirk 1)."""
+    metadata = approved_doc.get("metadata") or {}
+    spec = approved_doc.get("spec") or {}
+    project = metadata.get("project_id") or spec.get("project")
+    kms_names = (
+        (spec.get("encryption_config") or {}).get("kms_key_names")
+        or [spec.get("kms_key_name") or DEFAULT_SPANNER_KMS_KEY_NAME]
+    )
+
+    entry: dict[str, Any] = {
+        "project": project,
+        "instance": spec["instance"],
+        "name": spec["name"],
+        "database_dialect": spec.get("database_dialect") or spec.get("dialect", "GOOGLE_STANDARD_SQL"),
+        "version_retention_period": spec.get("version_retention_period", "1h"),
+        "encryption_config": {"kms_key_names": list(kms_names)},
+        "deletion_protection": bool(spec.get("deletion_protection", True)),
+        "enable_drop_protection": bool(spec.get("enable_drop_protection", True)),
+        "ddl": list(spec.get("ddl") or spec.get("initial_ddl") or []),
+        "backup_schedule": spec.get("backup_schedule"),
+        "iam_bindings": _iam_bindings_from_spec(spec),
+    }
+    if not entry["deletion_protection"] or not entry["enable_drop_protection"]:
+        raise ValueError("SPN-DEL-002: deletion_protection and enable_drop_protection must be true")
+    return entry
+
+
+def build_spanner_instance_observed_projection(
+    entry: dict[str, Any],
+    *,
+    tf_address: str,
+) -> tuple[dict[str, Any], str]:
+    projection = {
+        "exists": True,
+        "tf_address": tf_address,
+        "project": entry["project"],
+        "name": entry["name"],
+        "display_name": entry.get("display_name"),
+        "config": entry.get("config"),
+        "edition": entry.get("edition"),
+        "instance_type": entry.get("instance_type"),
+        "processing_units": entry.get("processing_units"),
+        "num_nodes": entry.get("num_nodes"),
+        "autoscaling_config": entry.get("autoscaling_config"),
+        "default_backup_schedule_type": entry.get("default_backup_schedule_type"),
+        "labels": entry.get("labels") or {},
+        "iam_bindings": entry.get("iam_bindings") or {},
+        "force_destroy": entry.get("force_destroy", False),
+        "tenancy": entry.get("tenancy", "dedicated"),
+    }
+    return _finalize_projection(projection)
+
+
+def build_spanner_database_observed_projection(
+    entry: dict[str, Any],
+    *,
+    tf_address: str,
+) -> tuple[dict[str, Any], str]:
+    projection = {
+        "exists": True,
+        "tf_address": tf_address,
+        "project": entry["project"],
+        "instance": entry["instance"],
+        "name": entry["name"],
+        "database_dialect": entry.get("database_dialect"),
+        "version_retention_period": entry.get("version_retention_period"),
+        "encryption_config": entry.get("encryption_config") or {},
+        "deletion_protection": entry.get("deletion_protection", True),
+        "enable_drop_protection": entry.get("enable_drop_protection", True),
+        "backup_schedule": entry.get("backup_schedule"),
+        "iam_bindings": entry.get("iam_bindings") or {},
+    }
+    return _finalize_projection(projection)
+
+
+def _finalize_projection(projection: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    raw = canonical_json(projection)
+    if len(raw.encode("utf-8")) > MAX_PROJECTION_BYTES:
+        raise ValueError(f"Observed projection exceeds {MAX_PROJECTION_BYTES} bytes")
+    return projection, canonical_sha256(projection)
+
+
+def convert_approved_to_expected_entry(kind: str, approved_doc: dict[str, Any]) -> dict[str, Any]:
+    if kind == "gcs_bucket":
+        return convert_approved_gcs_bucket_to_expected_entry(approved_doc)
+    if kind == "spanner_instance":
+        return convert_approved_spanner_instance_to_expected_entry(approved_doc)
+    if kind == "spanner_database":
+        return convert_approved_spanner_database_to_expected_entry(approved_doc)
+    return copy.deepcopy(approved_doc.get("spec") or {})
 
 
 def convert_approved_gcs_bucket_to_expected_entry(approved_doc: dict[str, Any]) -> dict[str, Any]:

@@ -22,7 +22,10 @@ tf-validate:
 	tflint --chdir=modules/gcs-bucket/modules/bucket
 	tflint --chdir=modules/gcs-bucket
 	opa test modules/gcs-bucket/policies -v
-	conftest test --policy modules/gcs-bucket/policies modules/gcs-bucket/examples/requested.json modules/gcs-bucket/examples/approved.json
+	conftest test --policy modules/project-root/policies modules/gcs-bucket/examples/requested.json modules/gcs-bucket/examples/approved.json
+	terraform -chdir=modules/project-root fmt -check -recursive
+	terraform -chdir=modules/project-root init -backend=false -input=false
+	terraform -chdir=modules/project-root validate
 
 lint-helm:
 	helm lint deploy/helm/spp-workers -f deploy/values-md-dev.yaml

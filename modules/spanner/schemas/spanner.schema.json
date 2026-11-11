@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ssp.example/schemas/spanner.schema.json",
+  "title": "SPP Spanner instance and database request fragments",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/spanner_instance" },
+    { "$ref": "#/$defs/spanner_database" }
+  ],
+  "$defs": {
+    "spanner_instance": {
+      "type": "object",
+      "required": ["kind", "spec"],
+      "properties": {
+        "kind": { "const": "spanner_instance" },
+        "spec": {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string", "maxLength": 64 },
+            "display_name": { "type": "string", "minLength": 4, "maxLength": 30 },
+            "config": { "const": "regional-us-east1" },
+            "edition": { "enum": ["STANDARD", "ENTERPRISE", "ENTERPRISE_PLUS"] },
+            "force_destroy": { "const": false }
+          }
+        }
+      }
+    },
+    "spanner_database": {
+      "type": "object",
+      "required": ["kind", "spec"],
+      "properties": {
+        "kind": { "const": "spanner_database" },
+        "spec": {
+          "type": "object",
+          "required": ["instance", "name"],
+          "properties": {
+            "instance": { "type": "string" },
+            "name": {
+              "type": "string",
+              "maxLength": 30,
+              "pattern": "^[a-z][a-z0-9_]*$"
+            },
+            "database_dialect": { "const": "GOOGLE_STANDARD_SQL" },
+            "deletion_protection": { "const": true },
+            "enable_drop_protection": { "const": true },
+            "encryption_config": {
+              "type": "object",
+              "required": ["kms_key_names"],
+              "properties": {
+                "kms_key_names": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^projects/[^/]+/locations/us-east1/keyRings/[^/]+/cryptoKeys/[^/]+$"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
