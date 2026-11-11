@@ -1,4 +1,10 @@
-.PHONY: test tf-validate lint-helm deploy
+.PHONY: test go-test go-build tf-validate lint-helm deploy
+
+go-test:
+	go test ./...
+
+go-build:
+	go build -o bin/provisioning-worker ./cmd/provisioning-worker
 
 PROJECT_ID ?= microdrive-dev
 REGION ?= us-east1

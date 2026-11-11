@@ -6,7 +6,9 @@ Implements backlog items **WI-002** (Temporal workers & K8s Job runner), **WI-00
 
 ## Architecture & Scope Summary
 
-1. **Temporal Workers (`workers/`, WI-002):**
+1. **Temporal Workers (`cmd/provisioning-worker`, `internal/`, WI-002):**
+   - **Go** polls Temporal and runs workflows; **activities** call embedded Python when `SSP_WORKER_USE_K8S/GCS/DB=true` (see `docs/GO-MIGRATION.md`).
+   - Legacy `python -m workers.main` is retired from the container image CMD.
    - **`GcsBucketProvisionWorkflow`** (default task queue `spp-gcs-provisioning` matching `ssp-cp`), **`RequestWorkflow`** (`req-<request_id>`), **`ApprovalGateWorkflow`** (`apr-<request_id>`), and **`StateUnitReconcilerWorkflow`** (`su-gcp-<project_id>`).
    - Accepts both `approved_spec` (dispatched by `ssp-cp`) and `approved_doc` payload keys.
    - Uses **real GCS** (`RealGcsObjectStore` via `google-cloud-storage` + Workload Identity on `gs://<spp-factory-host-project-id>-spp-tfstate` with `if_generation_match=0`) and **real AlloyDB** (`AlloyDbStateStore` via `psycopg` connecting to `10.80.140.2:5432`, db `spp_platform`, schema `idp`, password from `SPP_ALLOYDB_PASSWORD` / K8s Secret `spp-alloydb-credentials`) whenever configured, keeping `InMemoryStateStore` only for unit/replay tests.
