@@ -37,8 +37,8 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY workers /app/workers
 COPY modules /app/modules
 
-# Pre-initialize provider cache in modules/gcs-bucket so runner Jobs can init rapidly
-RUN terraform -chdir=/app/modules/gcs-bucket init -backend=false -input=false || true && \
+# Pre-initialize provider cache in project-root so runner Jobs can init rapidly
+RUN terraform -chdir=/app/modules/project-root init -backend=false -input=false || true && \
     chown -R spp:spp /app
 
 USER 10001:10001
@@ -48,8 +48,8 @@ ENV SPP_K8S_NAMESPACE=spp-platform \
     SPP_RUNNER_GSA=spp-deploy@microdrive-dev.iam.gserviceaccount.com \
     SPP_STATE_BUCKET=microdrive-dev-spp-tfstate \
     SPP_DEFAULT_KMS_KEY_NAME=projects/microdrive-dev/locations/us-east1/keyRings/spp-keyring/cryptoKeys/spp-gcs-cmek \
-    SPP_TF_MODULE_DIR=/app/modules/gcs-bucket \
-    SPP_POLICY_DIR=/app/modules/gcs-bucket/policies \
+    SPP_TF_MODULE_DIR=/app/modules/project-root \
+    SPP_POLICY_DIR=/app/modules/project-root/policies \
     SPP_RUNNER_DRY_RUN=false \
     GOOGLE_CLOUD_PROJECT=microdrive-dev \
     GOOGLE_CLOUD_LOCATION=us-east1

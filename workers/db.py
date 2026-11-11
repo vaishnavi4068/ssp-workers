@@ -26,6 +26,10 @@ from .models import (
     canonical_json,
     canonical_sha256,
     convert_approved_gcs_bucket_to_expected_entry,
+    convert_approved_spanner_database_to_expected_entry,
+    convert_approved_spanner_instance_to_expected_entry,
+    convert_approved_to_expected_entry,
+    tfvars_collection_key,
     k8s_job_name,
     render_tf_address,
 )
@@ -215,6 +219,33 @@ class InMemoryStateStore:
     def __init__(self, gcs_store: RealGcsObjectStore | None = None) -> None:
         self.gcs_store = gcs_store
         self.approval_gate_configs: dict[str, dict[str, Any]] = {
+            "spanner_data_owner": {
+                "gate_key": "spanner_data_owner",
+                "version": 1,
+                "enabled": True,
+                "config": {
+                    "order": "sequential",
+                    "self_approval": "deny",
+                    "require_human_approval_on_delete": True,
+                    "approvers": [
+                        {
+                            "key": "data_owner",
+                            "ticket_field": "/metadata/owner",
+                            "mandatory": True,
+                            "sla_days": 5,
+                        },
+                        {
+                            "key": "dbaas_reviewer",
+                            "role": "dbaas_reviewer",
+                            "mandatory": True,
+                            "run_after_approver_keys": ["data_owner"],
+                            "skip_condition": "metadata.environment not in ('prod') and metadata.resolved.app_tier != '1'",
+                            "sla_days": 3,
+                        },
+                    ],
+                    "max_wait_days": 13,
+                },
+            },
             "gcs_bucket_owner": {
                 "gate_key": "gcs_bucket_owner",
                 "version": 1,
@@ -436,6 +467,7 @@ class InMemoryStateStore:
         approval_id: str | None = None,
         state_unit_id: str | None = None,
         base_approval_id: str | None = None,
+        parent_resource_id: str | None = None,
         approval_status: str = "APPROVED",
     ) -> dict[str, Any]:
         """Seed or record a resource, request, and decided approval in the store (Gate 1 & Gate 2)."""
@@ -464,8 +496,29 @@ class InMemoryStateStore:
         apr_id = approval_id or str(uuid.uuid4())
 
         kind_meta = self.resource_kinds[kind]
-        tf_address = render_tf_address(kind_meta["tf_address_template"], name=name)
-        resource_key = f"gcp:{project_id}:{kind}:{name}"
+        instance_name = spec.get("instance") if kind == "spanner_database" else None
+        tf_address = render_tf_address(
+            kind_meta["tf_address_template"],
+            name=name,
+            instance=instance_name,
+        )
+        resource_key = (
+            f"gcp:{project_id}:{kind}:{instance_name}/{name}"
+            if kind == "spanner_database"
+            else f"gcp:{project_id}:{kind}:{name}"
+        )
+
+        if parent_resource_id is None:
+            parent_resource_id = approved_doc.get("parent_resource_id")
+        if kind == "spanner_database" and instance_name and not parent_resource_id:
+            for existing in self.resources.values():
+                if (
+                    existing["state_unit_id"] == su_id
+                    and existing["kind"] == "spanner_instance"
+                    and existing["name"] == instance_name
+                ):
+                    parent_resource_id = existing["resource_id"]
+                    break
 
         approved_sha = canonical_sha256(approved_doc)
 
@@ -477,7 +530,7 @@ class InMemoryStateStore:
             "state_unit_id": su_id,
             "kind": kind,
             "name": name,
-            "parent_resource_id": None,
+            "parent_resource_id": parent_resource_id,
             "resource_key": resource_key,
             "tf_address": tf_address,
             "apm_id": str(metadata["apm_id"]).lower(),
@@ -633,12 +686,10 @@ class InMemoryStateStore:
                 change = "unchanged"
 
             if change != "removed":
-                if kind == "gcs_bucket":
-                    entry = convert_approved_gcs_bucket_to_expected_entry(apr["approved_spec"])
-                    tfvars[collection][res["name"]] = entry
-                else:
-                    entry = copy.deepcopy(apr["approved_spec"].get("spec") or {})
-                    tfvars[collection][res["name"]] = entry
+                approved_spec = apr["approved_spec"]
+                entry = convert_approved_to_expected_entry(kind, approved_spec)
+                map_key = tfvars_collection_key(kind, name=res["name"], spec=approved_spec.get("spec") or {})
+                tfvars[collection][map_key] = entry
 
             manifest_members.append(
                 {
@@ -1146,8 +1197,17 @@ class AlloyDbStateStore:
 
                 # Otherwise insert resource, submission, request, and approval (e.g., for standalone workflow runs or rollbacks)
                 kind_meta = self.resource_kinds.get(kind) or DEFAULT_RESOURCE_KINDS["gcs_bucket"]
-                tf_address = render_tf_address(kind_meta["tf_address_template"], name=name)
-                resource_key = f"gcp:{project_id}:{kind}:{name}"
+                instance_name = spec.get("instance") if kind == "spanner_database" else None
+                tf_address = render_tf_address(
+                    kind_meta["tf_address_template"],
+                    name=name,
+                    instance=instance_name,
+                )
+                resource_key = (
+                    f"gcp:{project_id}:{kind}:{instance_name}/{name}"
+                    if kind == "spanner_database"
+                    else f"gcp:{project_id}:{kind}:{name}"
+                )
                 approved_sha = canonical_sha256(approved_doc)
                 sub_id = str(uuid.uuid4())
 
@@ -1405,11 +1465,10 @@ class AlloyDbStateStore:
 
                     approved_spec = res["approved_spec"]
                     if change != "removed":
-                        if kind == "gcs_bucket":
-                            entry = convert_approved_gcs_bucket_to_expected_entry(approved_spec)
-                            tfvars[collection][res["name"]] = entry
-                        else:
-                            tfvars[collection][res["name"]] = copy.deepcopy(approved_spec.get("spec") or {})
+                        entry = convert_approved_to_expected_entry(kind, approved_spec)
+                        spec_body = approved_spec.get("spec") or {}
+                        map_key = tfvars_collection_key(kind, name=res["name"], spec=spec_body)
+                        tfvars[collection][map_key] = entry
 
                     manifest_members.append(
                         {

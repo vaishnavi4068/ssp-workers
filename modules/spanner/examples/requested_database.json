@@ -1,0 +1,28 @@
+{
+  "api_version": "idp.spp/v1",
+  "kind": "spanner_database",
+  "action": "create",
+  "metadata": {
+    "apm_id": "apm0017299",
+    "project_id": "spp-nonprod-orders-svc",
+    "environment": "nonprod",
+    "lob": "spp",
+    "tenancy": "dedicated"
+  },
+  "spec": {
+    "instance": "spp-nonprod-orders",
+    "name": "orders",
+    "dialect": "GOOGLE_STANDARD_SQL",
+    "version_retention_period": "1h",
+    "access": [
+      {
+        "role": "roles/spanner.databaseReader",
+        "members": ["group:gcp-spp-nonprod-orders-read@example.com"]
+      },
+      {
+        "role": "roles/spanner.databaseUser",
+        "members": ["serviceAccount:orders-api@spp-nonprod-orders-svc.iam.gserviceaccount.com"]
+      }
+    ]
+  }
+}
