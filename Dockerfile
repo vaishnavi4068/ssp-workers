@@ -1,8 +1,18 @@
+# Build Go Temporal worker (workflows + activity dispatch).
+FROM golang:1.26-bookworm AS gobuild
+WORKDIR /src
+COPY go.mod go.sum ./
+COPY cmd ./cmd
+COPY internal ./internal
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/provisioning-worker ./cmd/provisioning-worker
+
+# Runtime: Go worker entrypoint; Python remains for activity bridge + tf-runner tooling in image.
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    SSP_WORKER_APP_ROOT=/app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -12,7 +22,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install OPA, Conftest, and Terraform 1.10.5 for policy evaluation and runner fallback
 RUN curl -sL -o /usr/local/bin/opa https://openpolicyagent.org/downloads/v0.69.0/opa_linux_amd64_static && \
     chmod +x /usr/local/bin/opa && \
     curl -sL https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_0.56.0_Linux_x86_64.tar.gz | tar xz -C /usr/local/bin conftest && \
@@ -31,6 +40,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY workers /app/workers
 COPY modules /app/modules
+COPY --from=gobuild /out/provisioning-worker /app/bin/provisioning-worker
 
 RUN chown -R spp:spp /app
 
@@ -56,6 +66,7 @@ ENV TEMPORAL_ADDRESS=temporal-frontend.spp-temporal.svc.cluster.local:7233 \
     GOOGLE_CLOUD_LOCATION=us-east1 \
     SPP_WORKER_USE_K8S=true \
     SPP_WORKER_USE_GCS=true \
-    SPP_WORKER_USE_DB=true
+    SPP_WORKER_USE_DB=true \
+    SSP_WORKER_PYTHON_ACTIVITIES=true
 
-CMD ["python", "-m", "workers.main"]
+CMD ["/app/bin/provisioning-worker"]

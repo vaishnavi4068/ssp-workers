@@ -1,26 +1,26 @@
 # Python → Go workers migration
 
-Branch `cursor/go-workers-b7b7` ports **Temporal workflows and activities** from `workers/*.py` to Go while keeping Terraform modules and the runner image unchanged.
+## Runtime (merged path)
 
-## Phase 1 (this branch)
+| Component | Implementation |
+|-----------|----------------|
+| Temporal **workflows** | **Go** (`internal/workflows`, `cmd/provisioning-worker`) |
+| **Activities** (dev/tests, `SSP_WORKER_*=false`) | **Go** in-memory (`internal/activities/memory.go`) |
+| **Activities** (cluster, real K8s/GCS/DB) | **Python bridge** (`python -m workers.run_activity`) until native Go port |
+| **Container CMD** | `/app/bin/provisioning-worker` (Go) |
+| **Terraform runner Jobs** | Unchanged (`Dockerfile.runner`, `modules/`) |
 
-- `cmd/provisioning-worker` — polls `TEMPORAL_TASK_QUEUE` (default `spp-gcs-provisioning`)
-- Workflow names match Python: `GcsBucketProvisionWorkflow`, `ApprovalGateWorkflow`, `RequestWorkflow`, `StateUnitReconcilerWorkflow`
-- Activity names match Python `*_activity` strings
-- **Memory mode** (default): activities succeed without K8s/GCS/AlloyDB — for unit/replay tests
-- **Real mode**: set `SSP_WORKER_USE_K8s=true` (etc.) — activities return "not implemented yet" until Phase 2
+Set `SSP_WORKER_PYTHON_ACTIVITIES=false` to force Go memory activities only (not for production).
 
-## Run
+## Commands
 
 ```bash
 go test ./...
-go run ./cmd/provisioning-worker   # requires Temporal at TEMPORAL_ADDRESS
+go run ./cmd/provisioning-worker
+make test          # Python pytest (regression corpus)
 ```
 
-Python worker remains available until Phase 2 parity tests pass and Helm switches the image entrypoint.
+## Phase 3 (next)
 
-## Phase 2 (next)
-
-- Port `workers/db.py`, `k8s_runner.py`, `drift.py` to `internal/tfrun`, `internal/k8s`, `internal/drift`
-- Wire Postgres/GCS clients; delete `workers/` Python package from the runtime image
-- Replay parity with `tests/test_ssp_workers.py` scenarios
+- Native Go `internal/store` (pgx + GCS + k8s) replacing the Python activity bridge
+- Retire `python -m workers.main` and slim the image Python footprint to runner-only needs
